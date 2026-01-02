@@ -1,2 +1,3 @@
-# optimizing-agent-fidelity-ma
+# MA | Optimizing Agent Fidelity
+
 MA Thesis supplementary implementation as a REST endpoint of the agents that supports GUI screenshots and interaction. 
