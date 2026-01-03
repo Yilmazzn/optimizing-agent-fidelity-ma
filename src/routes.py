@@ -24,15 +24,18 @@ def include_routes(app: FastAPI):
         return {"status": "ok"}
 
     @app.post("/init", status_code=200)
-    def init(init_request: InitRequest, agent = Depends(get_agent)):
-        app.state.agent = build_agent(
+    def init(init_request: InitRequest):
+        agent = build_agent(
             agent_type=init_request.agent,
         )
+        app.state.agent = agent
+        app.state.task = init_request.task
+        logger.info(f"Initialized agent: '{agent}' with task: '{init_request.task}'")
         agent.reset()
 
     @app.post("/reset", status_code=200)
     def reset(agent = Depends(get_agent)):
-        logger.info(f"Reset agent: {agent}")
+        logger.info(f"Reset agent: '{agent}'")
         agent.reset()
 
         if hasattr(app.state, "task"):

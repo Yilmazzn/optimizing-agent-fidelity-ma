@@ -1,4 +1,5 @@
 from datetime import datetime
+import os
 
 from agents.agent import Agent
 from domain.request import AgentPredictionResponse, TokenUsage
@@ -15,27 +16,43 @@ _ANTHROPIC_MODEL_MAP = {
     "claude-sonnet-4.5": "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
 }
 
-_SYSTEM_PROMPT = """
-<SYSTEM_CAPABILITY>
-* You are utilising an Ubuntu virtual machine with internet access.
+_SYSTEM_PROMPT = f"""<SYSTEM_CAPABILITY>
+* You are utilising an Ubuntu virtual machine using x86_64 architecture with internet access.
 * You can feel free to install Ubuntu applications with your bash tool. Use curl instead of wget.
-* To open chrome or any application, please just click on the icon.
+* To open browser, please just click on the Chrome icon.  Note, Chrome is what is installed on your system.
 * Using bash tool you can start GUI applications, but you need to set export DISPLAY=:1 and use a subshell. For example "(DISPLAY=:1 xterm &)". GUI apps run with bash tool will appear within your desktop environment, but they may take some time to appear. Take a screenshot to confirm it did.
-* When using your bash tool with commands that are expected to output very large quantities of text, redirect into a tmp file and use str_replace_based_edit_tool or `grep -n -B <lines before> -A <lines after> <query> <filename>` to confirm output.
+* When using your bash tool with commands that are expected to output very large quantities of text, redirect into a tmp file and use str_replace_editor or `grep -n -B <lines before> -A <lines after> <query> <filename>` to confirm output.
 * When viewing a page it can be helpful to zoom out so that you can see everything on the page.  Either that, or make sure you scroll down to see everything before deciding something isn't available.
+* DO NOT ask users for clarification during task execution. DO NOT stop to request more information from users. Always take action using available tools!!!
+* You generally do not have to make screenshots, since the system provides screenshots after every action you take. 
 * When using your computer function calls, they take a while to run and send back to you.  Where possible/feasible, try to chain multiple of these calls all into one function calls request.
-* The current date is {dt}.
+* TASK FEASIBILITY: You can declare a task infeasible at any point during execution - whether at the beginning after taking a screenshot, or later after attempting some actions and discovering barriers. Carefully evaluate whether the task is feasible given the current system state, available applications, and task requirements. If you determine that a task cannot be completed due to:
+  - Missing required applications or dependencies that cannot be installed
+  - Insufficient permissions or system limitations
+  - Contradictory or impossible requirements
+  - Any other fundamental barriers that make completion impossible
+  Then you MUST output exactly "[INFEASIBLE]" (including the square brackets) anywhere in your response to trigger the fail action. The system will automatically detect this pattern and terminate the task appropriately.
+* The current date is {datetime.today().strftime('%A, %B %d, %Y')}.
+* Home directory of this Ubuntu system is '/home/user'.
+* If you need a password for sudo, the password of the computer is '{os.getenv("VM_SUDO_PASSWORD")}'. 
 </SYSTEM_CAPABILITY>
-""".strip().format(dt=datetime.today().strftime("%A, %B %d, %Y"))
+
+<IMPORTANT>
+* If the item you are looking at is a pdf, if after taking a single screenshot of the pdf it seems that you want to read the entire document instead of trying to continue to read the pdf from your screenshots + navigation, determine the URL, use curl to download the pdf, install and use pdftotext to convert it to a text file, and then read that text file directly with your StrReplaceEditTool.
+</IMPORTANT>"""
 
 
 class BaseAnthropicAgent(Agent):
 
-    def __init__(self, model: str, max_images_in_history: int = 3, **kwargs):
+    def __init__(self, model: str, max_images_in_history: int = 3, image_size = (1280, 720), **kwargs):
         self.model = model
-        self.max_images_in_history = max_images_in_history
 
-        super().__init__(name=f"base-anthropic-{model}", *kwargs)
+        super().__init__(
+            name=f"base-anthropic-{model}", 
+            image_size=image_size, 
+            max_images_in_history=max_images_in_history,
+            **kwargs
+        )
 
         expect_env_var("AWS_ACCESS_KEY_ID")
         expect_env_var("AWS_SECRET_ACCESS_KEY")
@@ -106,12 +123,13 @@ class BaseAnthropicAgent(Agent):
                 "content": content,
             })
 
-            ## ASSISTANT
-            messages.append({
-                "rolwe": "assistant",
-                "content": ele["response"]
-            })
-
+            
+            ## ASSISTANT (if not last message)
+            if "response" in ele:
+                messages.append({
+                    "role": "assistant",
+                    "content": ele["response"]
+                })
 
         return messages
 
@@ -139,7 +157,7 @@ class BaseAnthropicAgent(Agent):
         for block in response.content:
             if block.type == "tool_use":
                 pyautogui_actions, tool_result = self.parse_actions_from_tool_call(block.input)
-                actions = actions.append(pyautogui_actions)
+                actions.append(pyautogui_actions)
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
@@ -147,14 +165,14 @@ class BaseAnthropicAgent(Agent):
                 })
         self.history[-1]["tool_results"] = tool_results
 
-        response_str = ""
+        responses = []
         for block in response.content:
             if block.type == "text":
-                response_str += block.text + "\n\n"
+                responses.append(block.text)
 
         return AgentPredictionResponse(
-            response=response_str.strip(),
-            pyautogui_actions="\n".join(actions),
+            response="\n\n".join(responses).strip(),
+            pyautogui_actions="\n".join(actions).strip(),
             usage=TokenUsage(
                 prompt_tokens=response.usage.input_tokens,
                 completion_tokens=response.usage.output_tokens,
@@ -162,15 +180,10 @@ class BaseAnthropicAgent(Agent):
             )
         )
 
-    def parse_actions_from_tool_call(self, tool_call: dict) -> tuple[str, str]:
+    def parse_actions_from_tool_call(self, function_args: dict) -> tuple[str, str]:
         result = ""
-        function_args = (
-            tool_call["input"]
-        )
         
         action = function_args.get("action")
-        if not action:
-            action = tool_call.function.name
         action_conversion = {
             "left click": "left_click",
             "right click": "right_click"
