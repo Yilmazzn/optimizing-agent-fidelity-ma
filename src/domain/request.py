@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel
 
@@ -9,11 +9,12 @@ class AgentPredictionRequest(BaseModel):
 
 class TokenUsage(BaseModel):
     prompt_tokens: int
+    cached_prompt_tokens: Optional[int]
     completion_tokens: int
 
 
 class AgentPredictionResponse(BaseModel):
-    response: str
+    response: Any
     pyautogui_actions: Optional[str]
     usage: TokenUsage
 

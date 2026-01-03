@@ -1,5 +1,5 @@
 from agents.agent import Agent
-from agents.base_models.claude import BaseAnthropicAgent
+from agents.base_models.anthropic.claude_agent import BaseAnthropicAgent
 
 
 def build_agent(agent_type: str) -> Agent:

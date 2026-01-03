@@ -4,7 +4,7 @@ from io import BytesIO
 from PIL import Image
 
 from domain.request import AgentPredictionResponse
-from src.utils import VIEWPORT_SIZE
+from utils import VIEWPORT_SIZE
 
 
 class Agent(abc.ABC):
@@ -12,14 +12,14 @@ class Agent(abc.ABC):
     def __init__(
             self,
             name: str,
-            include_pyautogui_actions: bool = False,
             max_images_in_history: int = 3,
             image_size: tuple[int, int] = (1920, 1080),
+            screen_size: tuple[int, int] = VIEWPORT_SIZE,
     ):
         self.name = name
-        self.include_pyautogui_actions = include_pyautogui_actions
         self.max_images_in_history = max_images_in_history
         self.image_size = image_size
+        self.screen_size = screen_size
 
         self.history = []
 
@@ -42,6 +42,27 @@ class Agent(abc.ABC):
 
         resized_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
         return resized_b64
+
+    def resize_coords_to_original(self, coords: tuple[int, int]):
+        """
+        Resize coordinates from the agent's image size back to the original viewport size
+        :param coords: (x, y) coordinates in the agent's image space
+        :return: (x, y) coordinates in the original viewport space
+        """
+        if VIEWPORT_SIZE == self.image_size:
+            return coords
+
+        x, y = coords
+        src_w, src_h = self.image_size
+        dst_w, dst_h = VIEWPORT_SIZE
+
+        scale_x = dst_w / src_w
+        scale_y = dst_h / src_h
+
+        orig_x = int(round(x * scale_x))
+        orig_y = int(round(y * scale_y))
+
+        return orig_x, orig_y
 
     def map_cords_to_orig_cords(self, cords: tuple[int, int]):
         """

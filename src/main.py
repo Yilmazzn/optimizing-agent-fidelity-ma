@@ -38,7 +38,18 @@ if __name__ == "__main__":
     #
     # uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=not DISABLE_RELOAD)
 
+    import base64
+
+    with open(r"C:\Users\yilma\Desktop\Projects\optimizing-agent-fidelity-ma\data\test-image.png", "rb") as f:
+        _image_bytes = f.read()
+
+        # encode base 64
+        _image_base64 = base64.b64encode(_image_bytes).decode("utf-8")
+
     from agents.agent_factory import build_agent
 
     agent = build_agent(agent_type="anthropic")
+
+    result = agent.predict(screenshot=_image_base64, task="Click on the 'Log In' Button")
+    print(result)
 
