@@ -1,7 +1,7 @@
 from datetime import datetime
 import os
 
-from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from agents.agent import Agent
 from domain.request import AgentPredictionResponse, TokenUsage
@@ -42,6 +42,20 @@ _SYSTEM_PROMPT = f"""<SYSTEM_CAPABILITY>
 <IMPORTANT>
 * If the item you are looking at is a pdf, if after taking a single screenshot of the pdf it seems that you want to read the entire document instead of trying to continue to read the pdf from your screenshots + navigation, determine the URL, use curl to download the pdf, install and use pdftotext to convert it to a text file, and then read that text file directly with your StrReplaceEditTool.
 </IMPORTANT>"""
+
+
+def _is_retriable_anthropic_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code is None:
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+
+    # If it's a client-side error (4xx) that isn't typically transient, do not retry.
+    # Common transient 4xx cases: timeout/conflict/ratelimit.
+    if isinstance(status_code, int) and 400 <= status_code < 500:
+        return status_code in (408, 409, 429)
+
+    return True
 
 
 class BaseAnthropicAgent(Agent):
@@ -93,7 +107,12 @@ class BaseAnthropicAgent(Agent):
             message["content"][-1]["cache_control"] = {"type": "ephemeral"}
             remaining_breakpoints -= 1
 
-    
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=1.0, min=1.0, max=8.0),
+        retry=retry_if_exception(_is_retriable_anthropic_error),
+    )
     def _make_call(self, messages: list, max_tokens=4096):
         thinking = None
         if self.thinking_enabled:
@@ -102,44 +121,21 @@ class BaseAnthropicAgent(Agent):
                 "budget_tokens": self.thinking_budget_tokens,
             }
 
-        def _is_retriable(exc: Exception) -> bool:
-            status_code = getattr(exc, "status_code", None)
-            if status_code is None:
-                response = getattr(exc, "response", None)
-                status_code = getattr(response, "status_code", None)
-
-            # If it's a client-side error (4xx) that isn't typically transient,
-            # do not retry.
-            if isinstance(status_code, int) and 400 <= status_code < 500:
-                return status_code in (408, 409, 429)
-
-            return True
-
-        # initial attempt + 3 retries = 4 total attempts
-        retrying = Retrying(
-            stop=stop_after_attempt(4),
-            wait=wait_exponential(multiplier=1.0, min=1.0, max=8.0),
-            retry=retry_if_exception(_is_retriable),
-            reraise=True,
+        return self.client.beta.messages.create(
+            max_tokens=max_tokens,
+            model=self.inference_model,
+            thinking=thinking,
+            system=[
+                {
+                    "type": "text",
+                    "text": _SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"}
+                },
+            ],
+            tools=self.tools,
+            messages=messages,
+            betas=self.beta_flags,
         )
-
-        for attempt in retrying:
-            with attempt:
-                return self.client.beta.messages.create(
-                    max_tokens=max_tokens,
-                    model=self.inference_model,
-                    thinking=thinking,
-                    system=[
-                        {
-                            "type": "text",
-                            "text": _SYSTEM_PROMPT,
-                            "cache_control": {"type": "ephemeral"}
-                        },
-                    ],
-                    tools=self.tools,
-                    messages=messages,
-                    betas=self.beta_flags,
-                )
 
     def _build_messages(self) -> list:
         messages = []
