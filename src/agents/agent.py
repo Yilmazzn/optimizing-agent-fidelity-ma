@@ -2,6 +2,7 @@ import abc
 import base64
 from io import BytesIO
 from PIL import Image
+from typing import Any
 
 from domain.request import AgentPredictionResponse
 from utils import VIEWPORT_SIZE
@@ -103,8 +104,55 @@ class Agent(abc.ABC):
         self.history = []
 
     def get_config(self):
-        # return a dictionary of the agent's configuration without history
+        # Return a JSON-friendly snapshot of the agent's attributes.
+        # Keeps only: None/bool/int/float/str, dict, list (recursively).
+        # Drops any other objects (clients, locks, classes, etc.).
         config = vars(self).copy()
-        if 'history' in config:
-            del config['history']
-        return config
+        config.pop("history", None)
+        return _json_friendly(config)
+
+
+_SKIP = object()
+
+
+def _json_friendly_scalar(value: Any):
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return _SKIP
+
+
+def _json_friendly_dict(value: dict, *, _depth: int, _max_depth: int):
+    out: dict[str, Any] = {}
+    for k, v in value.items():
+        if not isinstance(k, str):
+            continue
+        sanitized = _json_friendly(v, _depth=_depth + 1, _max_depth=_max_depth)
+        if sanitized is not _SKIP:
+            out[k] = sanitized
+    return out
+
+
+def _json_friendly_seq(value, *, _depth: int, _max_depth: int):
+    out_list = []
+    for item in value:
+        sanitized = _json_friendly(item, _depth=_depth + 1, _max_depth=_max_depth)
+        if sanitized is not _SKIP:
+            out_list.append(sanitized)
+    return out_list
+
+
+def _json_friendly(value: Any, *, _depth: int = 0, _max_depth: int = 6):
+    if _depth > _max_depth:
+        return _SKIP
+
+    scalar = _json_friendly_scalar(value)
+    if scalar is not _SKIP:
+        return scalar
+
+    if isinstance(value, dict):
+        return _json_friendly_dict(value, _depth=_depth, _max_depth=_max_depth)
+
+    if isinstance(value, (list, tuple)):
+        return _json_friendly_seq(value, _depth=_depth, _max_depth=_max_depth)
+
+    return _SKIP

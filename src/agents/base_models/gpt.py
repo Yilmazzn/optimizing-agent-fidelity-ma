@@ -15,8 +15,7 @@ class BaseGPTAgent(Agent):
             api_key=api_key,
         )
 
-    def predict(self, screenshot: str, task: str) -> AgentPredictionResponse:
-        raise NotImplementedError()
-
+    def predict(self, screenshot: str, task) -> AgentPredictionResponse:
+        pass
 
 
