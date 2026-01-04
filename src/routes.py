@@ -1,9 +1,10 @@
 from fastapi import FastAPI, Request, HTTPException, Depends
 from loguru import logger
 
+from agents import agent
 from agents.agent import Agent
 from agents.agent_factory import build_agent
-from domain.request import AgentPredictionRequest, AgentPredictionResponse, InitRequest
+from domain.request import AgentPredictionRequest, AgentPredictionResponse, InitRequest, SetTaskRequest
 
 
 def get_agent(request: Request) -> Agent:
@@ -29,9 +30,14 @@ def include_routes(app: FastAPI):
             agent_type=init_request.agent,
         )
         app.state.agent = agent
-        app.state.task = init_request.task
-        logger.info(f"Initialized agent: '{agent}' with task: '{init_request.task}'")
+        logger.info(f"Initialized agent: '{agent}'")
         agent.reset()
+        return agent.get_config()
+
+    @app.post("/task", status_code=200)
+    def set_task(set_task_request: SetTaskRequest):
+        logger.info(f"Set task to: '{set_task_request.task}'")
+        app.state.task = set_task_request.task
 
     @app.post("/reset", status_code=200)
     def reset(agent = Depends(get_agent)):

@@ -103,4 +103,8 @@ class Agent(abc.ABC):
         self.history = []
 
     def get_config(self):
-       return vars(self)
+        # return a dictionary of the agent's configuration without history
+        config = vars(self).copy()
+        if 'history' in config:
+            del config['history']
+        return config

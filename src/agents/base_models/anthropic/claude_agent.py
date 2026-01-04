@@ -24,7 +24,7 @@ _SYSTEM_PROMPT = f"""<SYSTEM_CAPABILITY>
 * When using your bash tool with commands that are expected to output very large quantities of text, redirect into a tmp file and use str_replace_editor or `grep -n -B <lines before> -A <lines after> <query> <filename>` to confirm output.
 * When viewing a page it can be helpful to zoom out so that you can see everything on the page.  Either that, or make sure you scroll down to see everything before deciding something isn't available.
 * DO NOT ask users for clarification during task execution. DO NOT stop to request more information from users. Always take action using available tools!!!
-* You generally do not have to make screenshots, since the system provides screenshots after every action you take. 
+* NEVER USE THE SCREENSHOT TOOL. You already get screenshots automatically after every action in the user request. 
 * When using your computer function calls, they take a while to run and send back to you.  Where possible/feasible, try to chain multiple of these calls all into one function calls request.
 * TASK FEASIBILITY: You can declare a task infeasible at any point during execution - whether at the beginning after taking a screenshot, or later after attempting some actions and discovering barriers. Carefully evaluate whether the task is feasible given the current system state, available applications, and task requirements. If you determine that a task cannot be completed due to:
   - Missing required applications or dependencies that cannot be installed
@@ -48,7 +48,7 @@ class BaseAnthropicAgent(Agent):
         self.model = model
 
         super().__init__(
-            name=f"base-anthropic-{model}", 
+            name=f"anthropic-{model}", 
             image_size=image_size, 
             max_images_in_history=max_images_in_history,
             **kwargs
@@ -63,10 +63,23 @@ class BaseAnthropicAgent(Agent):
 
         if self.inference_model is None:
             raise ValueError(f"'{self.model}' is not a valid model")
+        
+        self.tools = [
+            {"type": "computer_20250124", "name": "computer", "display_width_px": self.image_size[0],
+                "display_height_px": self.image_size[1]},
+            {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"},
+            {"type": "bash_20250124", "name": "bash"}
+        ]
+        self.enable_prompt_caching = True
+        self.thinking_enabled = True
+        self.thinking_budget_tokens = 2048
+        self.beta_flags = ["computer-use-2025-01-24"]
 
     # https://platform.claude.com/docs/en/build-with-claude/prompt-caching
     # So in total up to 4 cache breakpoints are supported. Should be used on the most recent. 1 is reserved for the system prompt
     def _inject_prompt_caching(self, messages: list):
+        if not self.enable_prompt_caching:
+            return
         remaining_breakpoints = 3
         for message in reversed(messages):
             if message["role"] != "user":
@@ -78,10 +91,18 @@ class BaseAnthropicAgent(Agent):
             message["content"][-1]["cache_control"] = {"type": "ephemeral"}
             remaining_breakpoints -= 1
 
-    def _make_call(self, messages: list, max_tokens=1024):
+    def _make_call(self, messages: list, max_tokens=4096):
+        thinking = None
+        if self.thinking_enabled:
+            thinking = {
+                "type": "enabled",
+                "budget_tokens": self.thinking_budget_tokens,
+            }
+
         return self.client.beta.messages.create(
             max_tokens=max_tokens,
             model=self.inference_model,
+            thinking=thinking,
             system=[
                 {
                     "type": "text",
@@ -89,13 +110,9 @@ class BaseAnthropicAgent(Agent):
                     "cache_control": {"type": "ephemeral"}
                 },
             ],
-            tools=[
-                {"type": "computer_20250124", "name": "computer", "display_width_px": 1024,
-                 "display_height_px": 768},
-                {"type": "bash_20250124", "name": "bash"}
-            ],
+            tools=self.tools,
             messages=messages,
-            betas=["computer-use-2025-01-24"],
+            betas=self.beta_flags,
         )
 
     def _build_messages(self) -> list:
@@ -105,6 +122,11 @@ class BaseAnthropicAgent(Agent):
         for i, ele in enumerate(self.history):
             ## USER
             content = []
+            
+            # add tool result from previous step. Must come first as per https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#handling-results-from-client-tools
+            if i > 0: 
+                content.extend(self.history[i-1].get("tool_results", []))
+
             if i >= first_image_idx:
                 content.append({
                     "type": "image",
@@ -123,7 +145,6 @@ class BaseAnthropicAgent(Agent):
                 "content": content,
             })
 
-            
             ## ASSISTANT (if not last message)
             if "response" in ele:
                 messages.append({
@@ -163,12 +184,16 @@ class BaseAnthropicAgent(Agent):
                     "tool_use_id": block.id,
                     "content": tool_result,
                 })
+        
         self.history[-1]["tool_results"] = tool_results
 
         responses = []
         for block in response.content:
             if block.type == "text":
                 responses.append(block.text)
+
+        status = "working"
+        status = status if len(tool_results) > 0 else "done"
 
         return AgentPredictionResponse(
             response="\n\n".join(responses).strip(),
@@ -177,7 +202,8 @@ class BaseAnthropicAgent(Agent):
                 prompt_tokens=response.usage.input_tokens,
                 completion_tokens=response.usage.output_tokens,
                 cached_prompt_tokens=response.usage.cache_read_input_tokens,
-            )
+            ),
+            status=status
         )
 
     def parse_actions_from_tool_call(self, function_args: dict) -> tuple[str, str]:

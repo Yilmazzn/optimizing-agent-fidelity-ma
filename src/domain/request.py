@@ -17,9 +17,11 @@ class AgentPredictionResponse(BaseModel):
     response: Any
     pyautogui_actions: Optional[str]
     usage: TokenUsage
+    status: str = "working" # or "done", "infeasible", "error"
 
 # ===== INIT
-
 class InitRequest(BaseModel):
-    task: str
     agent: str
+
+class SetTaskRequest(BaseModel):
+    task: str
