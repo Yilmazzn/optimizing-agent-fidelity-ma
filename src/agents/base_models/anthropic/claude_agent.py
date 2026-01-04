@@ -1,6 +1,7 @@
 from datetime import datetime
 import os
 
+from loguru import logger
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from agents.agent import Agent
@@ -83,8 +84,8 @@ class BaseAnthropicAgent(Agent):
         self.tools = [
             {"type": "computer_20250124", "name": "computer", "display_width_px": self.image_size[0],
                 "display_height_px": self.image_size[1]},
-            {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"},
-            {"type": "bash_20250124", "name": "bash"}
+            #{"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"},
+            #{"type": "bash_20250124", "name": "bash"}
         ]
         self.enable_prompt_caching = True
         self.thinking_enabled = True
@@ -196,9 +197,11 @@ class BaseAnthropicAgent(Agent):
 
         tool_results = []
         actions = []
+
+        logger.info(f"Anthropic response: {response}")
         for block in response.content:
             if block.type == "tool_use":
-                pyautogui_actions, tool_result = self.parse_actions_from_tool_call(block.input)
+                pyautogui_actions, tool_result = self.parse_actions_from_tool_call(block)
                 actions.append(pyautogui_actions)
                 tool_results.append({
                     "type": "tool_result",
@@ -226,11 +229,38 @@ class BaseAnthropicAgent(Agent):
             ),
             status=status
         )
-
-    def parse_actions_from_tool_call(self, function_args: dict) -> tuple[str, str]:
-        result = ""
+    
+    def parse_actions_from_bash_tool(self, function_args) -> tuple[str, str]:
+        command = function_args.get("command")
+        restart = function_args.get("restart", False)
         
+        _pyautogui_actions_bash = ""
+        if restart:
+            _pyautogui_actions_bash += (
+                "pyautogui.hotkey('ctrl', 'alt', 't')\n"
+                "time.sleep(3)\n"
+                "pyautogui.write('pkill gnome-terminal', interval=0.05)\n"
+                "pyautogui.press('enter')\n"
+                "time.sleep(2)\n"
+                "pyautogui.hotkey('ctrl', 'alt', 't')\n"
+            )
+
+        return None, None
+
+    def parse_actions_from_tool_call(self, tool_call) -> tuple[str, str]:
+        result = ""
+        function_args = tool_call.input
+
+        if tool_call.name != "computer":
+            raise ValueError(f"Invalid tool call name: {tool_call}")
+
+        if tool_call.name == "bash":
+            return self.parse_actions_from_bash_tool(function_args)
+
+
         action = function_args.get("action")
+        if action is None:
+            raise ValueError(f"action is required in function_args, got: {tool_call.input}")
         action_conversion = {
             "left click": "left_click",
             "right click": "right_click"
@@ -408,7 +438,7 @@ class BaseAnthropicAgent(Agent):
                 for key in reversed(keys):
                     key = key.strip().lower()
                     result += f"pyautogui.keyUp('{key}')\n"
-
+            
             expected_outcome = f"Performed {action}"
             if coordinate:
                 expected_outcome += f" at {coordinate}"
