@@ -12,6 +12,8 @@ dependencies = [
     "openai>=2.14.0",
     "pillow>=12.0.0",
     "pydantic>=2.12.5",
+    "qwen-agent>=0.0.31",
     "tenacity>=9.0.0",
+    "transformers>=4.57.3",
     "uvicorn>=0.40.0",
 ]
