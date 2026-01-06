@@ -2,7 +2,7 @@ import abc
 import base64
 from io import BytesIO
 from PIL import Image
-from typing import Any
+from typing import Any, Sequence
 
 from domain.request import AgentPredictionResponse
 from utils import VIEWPORT_SIZE
@@ -44,14 +44,16 @@ class Agent(abc.ABC):
         resized_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
         return resized_b64
 
-    def resize_coords_to_original(self, coords: tuple[int, int]):
+    def resize_coords_to_original(self, coords: Sequence[float]) -> tuple[int, int]:
         """
         Resize coordinates from the agent's image size back to the original viewport size
         :param coords: (x, y) coordinates in the agent's image space
-        :return: (x, y) coordinates in the original viewport space
+        :return: [x, y] coordinates in the original viewport space (JSON-friendly array)
         """
         if VIEWPORT_SIZE == self.image_size:
-            return coords
+            if not isinstance(coords, (list, tuple)) or len(coords) != 2:
+                raise ValueError("coords must be a (x, y) pair")
+            return (int(round(float(coords[0]))), int(round(float(coords[1]))))
 
         x, y = coords
         src_w, src_h = self.image_size

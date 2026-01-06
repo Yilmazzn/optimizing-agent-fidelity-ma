@@ -1,4 +1,4 @@
-from typing import Union, Tuple, List, Iterable
+from typing import Union, List, Iterable, Sequence
 
 from qwen_agent.tools.base import BaseTool, register_tool
 
@@ -119,20 +119,6 @@ The action to perform. The available actions are:
     def _script(self, lines: Iterable[str]) -> str:
         return "\n".join([line for line in lines if line is not None and str(line).strip() != ""]).rstrip()
 
-    def _clamp_xy(self, coordinate: Tuple[int, int]) -> Tuple[int, int]:
-        if not isinstance(coordinate, (list, tuple)) or len(coordinate) != 2:
-            raise ValueError(f"coordinate must be a (x, y) pair, got: {coordinate}")
-        x_raw, y_raw = coordinate
-        try:
-            x = int(round(float(x_raw)))
-            y = int(round(float(y_raw)))
-        except Exception as e:
-            raise ValueError(f"coordinate values must be numeric, got: {coordinate}") from e
-
-        x = max(0, min(self.display_width_px - 1, x))
-        y = max(0, min(self.display_height_px - 1, y))
-        return x, y
-
     def _normalize_key(self, key: str) -> str:
         k = key.strip().lower()
         conversion = {
@@ -147,14 +133,13 @@ The action to perform. The available actions are:
         }
         return conversion.get(k, k)
 
-    def _mouse_click(self, button: str, coordinate: Tuple[int, int] | None):
+    def _mouse_click(self, button: str, coordinate: Sequence[float] | None):
         click_map = {
             "left_click": "click",
             "right_click": "rightClick",
             "middle_click": "middleClick",
             "double_click": "doubleClick",
-            # PyAutoGUI does have tripleClick on some versions, but keep it portable.
-            "triple_click": "doubleClick",
+            "triple_click": "tripleClick",
         }
         fn = click_map.get(button)
         if fn is None:
@@ -164,11 +149,9 @@ The action to perform. The available actions are:
         if coordinate is None:
             lines.append(f"pyautogui.{fn}()")
         else:
-            x, y = self._clamp_xy(coordinate)
+            x, y = coordinate
             lines.append(f"pyautogui.{fn}({x}, {y})")
 
-        # Give the UI a moment to react to clicks.
-        lines.append(f"time.sleep({self._SLEEP_AFTER_CLICK_S})")
         return self._script(lines)
 
     def _key(self, keys: List[str]):
@@ -193,6 +176,11 @@ The action to perform. The available actions are:
         if not isinstance(text, str):
             raise ValueError(f"text must be a string, got: {type(text)}")
 
+        # Some models send a literal backslash-n sequence ("\\n") instead of an actual newline.
+        # In that case, convert it so we press Enter rather than typing backslash + n.
+        if "\\n" in text and "\n" not in text:
+            text = text.replace("\\r\\n", "\n").replace("\\n", "\n")
+
         lines: list[str] = []
         parts = text.split("\n")
         for idx, part in enumerate(parts):
@@ -205,13 +193,12 @@ The action to perform. The available actions are:
         lines.append(f"time.sleep({self._SLEEP_SHORT_S})")
         return self._script(lines)
 
-    def _mouse_move(self, coordinate: Tuple[int, int]):
-        x, y = self._clamp_xy(coordinate)
-        # Short duration makes movement visible but fast.
+    def _mouse_move(self, coordinate: Sequence[float]):
+        x, y = coordinate
         return self._script([f"pyautogui.moveTo({x}, {y}, duration=0.2)"])
 
-    def _left_click_drag(self, coordinate: Tuple[int, int]):
-        x, y = self._clamp_xy(coordinate)
+    def _left_click_drag(self, coordinate: Sequence[float]):
+        x, y = coordinate
         lines = [
             "pyautogui.mouseDown()",
             f"time.sleep({self._SLEEP_DRAG_TAP_S})",

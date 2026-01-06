@@ -14,7 +14,10 @@ Rules:
 - Output exactly in the order: Action, <tool_call>.
 - Be brief: one sentence for Action.
 - Do not output anything else outside those parts.
-- If finishing, use action=terminate in the tool call.
+- Be precise and avoid unnecessary movements.
+- Always inspect the most recent screenshot before clicking.
+- If an application needs time to load, wait before taking more actions.
+- You must finish by calling action=answer with the final response and action=terminate with success/failure.
 """.strip()
 
 """

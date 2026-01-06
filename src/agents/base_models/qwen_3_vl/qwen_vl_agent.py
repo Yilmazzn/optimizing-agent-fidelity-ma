@@ -19,7 +19,7 @@ from qwen_agent.llm.fncall_prompts.nous_fncall_prompt import (
 from qwen_agent.agents import Assistant
 from qwen_agent.utils.output_beautify import typewriter_print, multimodal_typewriter_print
 
-from utils import expect_env_var
+from utils import VIEWPORT_SIZE, expect_env_var, map_coords_to_screen
 
 _INFERENCE_MODEL_MAP = {
     "qwen3-vl": "qwen3-vl-32b-thinking",
@@ -29,17 +29,19 @@ _INFERENCE_MODEL_MAP = {
 
 class QwenAgent(Agent):
 
-    def __init__(self, model: str, image_size=(1000, 1000), **kwargs) -> None:
+    def __init__(self, model: str, image_size=(1920, 1080), **kwargs) -> None:
         super().__init__(name=model, **kwargs)
         self.model = model
-        self.image_size = image_size
 
+        # qwen 3 vl trained on 1000x1000 coordinate system
         self.computer_use_tool = ComputerUse(
             cfg={
-                "display_width_px": self.image_size[0],
-                "display_height_px": self.image_size[1],
+                "display_width_px": 1000,
+                "display_height_px": 1000,
             }
         )
+
+        self.image_size = (1000, 1000) # for rescaling coordinates (dont scale image before)
     
     
         self.inference_model = _INFERENCE_MODEL_MAP.get(model, model)
@@ -78,18 +80,16 @@ class QwenAgent(Agent):
 
 
     def predict(self, screenshot: str, task: str) -> AgentPredictionResponse:
-        resized_image = self.resize_screenshot(screenshot)
-
         self.history.append({
-            "screenshot": resized_image,
+            "screenshot": screenshot,
         })
 
         resized_height, resized_width = qwen_utils.smart_resize(
-            width=self.image_size[0],
-            height=self.image_size[1],
+            width=1920,
+            height=1080,
             factor=32,      # Qwen VL 3 factor
-            min_pixels=3136,
-            max_pixels=12845056,
+            min_pixels=1000*1000,
+            max_pixels=2000*1200,
         )
 
         # system message
@@ -121,43 +121,84 @@ class QwenAgent(Agent):
                 })
             if i == 0:
                 user_content.append({"type": "text", "text": task})
+            else: 
+                tool_result = self.history[i-1].get("tool_result", None)
+                user_content.append({
+                    "type": "text",
+                    "text": f"<tool_result>\n{tool_result}\n</tool_result>",
+                })
+
             messages.append({
                 "role": "user",
                 "content": user_content,
             })
 
-            agent_content = self.history[i].get("agent_response", None)
-            if agent_content:
+            agent_response = self.history[i].get("agent_response", None)
+            if agent_response:
                 messages.append({
                     "role": "assistant",
                     "content": [
-                        { "type": "text", "text": agent_content}
+                        { "type": "text", "text": agent_response}
                     ]
                 })
                 
         # make API call
         result = self._make_call(messages=messages)
         output_text = result.choices[0].message.content
-        
-    
-        # handle tool calls in output text
-        action = json.loads(output_text.split('<tool_call>\n')[1].split('\n</tool_call>')[0])
-        coordinate_raw = action.get("arguments", {}).get("coordinate")
-        _coordinate_absolute = [
-            coordinate_raw[0] / self.image_size[0] * resized_width,
-            coordinate_raw[1] / self.image_size[1] * resized_height,
-        ]
-
         cached_tokens = result.usage.prompt_tokens_details.cached_tokens
         token_usage = TokenUsage(
             prompt_tokens=result.usage.prompt_tokens,
             completion_tokens=result.usage.completion_tokens,
             cached_prompt_tokens=cached_tokens if cached_tokens else 0,
         )
+        
+    
+        # handle tool calls in output text
+        if "<tool_call>" not in output_text:
+            raise ValueError("No <tool_call> found in the model output.")
+        if "</tool_call>" not in output_text:
+            raise ValueError("No </tool_call> found in the model output.")
+        
+        try:
+            action = json.loads(output_text.split('<tool_call>\n')[1].split('\n</tool_call>')[0])
+        except json.JSONDecodeError as e:
+            return AgentPredictionResponse(
+                pyautogui_actions="FAIL",
+                usage=token_usage,
+                response=output_text + "\nFailed to parse tool_call JSON.",
+                status="fail"
+            )
+        
+        coordinate = action.get("arguments", {}).get("coordinate")
+        if coordinate: 
+            coordinate = map_coords_to_screen(
+                coords=tuple(coordinate),
+                scr_size=(1000, 1000),
+                target_size=(resized_width, resized_height)
+            )
+            coordinate = map_coords_to_screen(
+                coords=tuple(coordinate),
+                scr_size=(resized_width, resized_height),
+                target_size=VIEWPORT_SIZE
+            )
+            action["arguments"]["coordinate"] = list(coordinate)
 
-    def reset(self):
-        super().reset()
-        if self._resized_screenshots_dir is not None:
-            shutil.rmtree(self._resized_screenshots_dir, ignore_errors=True)
-        self._resized_screenshots_dir = None
+        try:
+            pyautogui_actions = self.computer_use_tool.call(action["arguments"])
+        except Exception as e:
+            return AgentPredictionResponse(
+                pyautogui_actions="FAIL",
+                usage=token_usage,
+                response=output_text + f"\nFailed to perform tool call: {str(e)}",
+                status="fail"
+            )
 
+        self.history[-1]["agent_response"] = output_text
+        self.history[-1]["tool_result"] = f"Performed {action['arguments']}"
+
+
+        return AgentPredictionResponse(
+            pyautogui_actions=pyautogui_actions,
+            usage=token_usage,
+            response=output_text
+        )
