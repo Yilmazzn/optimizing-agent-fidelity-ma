@@ -19,6 +19,7 @@ Use a mouse and keyboard to interact with a computer, and take screenshots.
 * Whenever you intend to move the cursor to click on an element like an icon, you should consult a screenshot to determine the coordinates of the element before moving the cursor.
 * If you tried clicking on a program or link but it failed to load, even after waiting, try adjusting your cursor position so that the tip of the cursor visually falls on the element that you want to click.
 * Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges.
+* Don't answer explicitly. Just terminate the task if finished with either success or failure.
 """.strip()
 
     parameters = {
@@ -39,6 +40,7 @@ The action to perform. The available actions are:
 * `hscroll`: Performs a horizontal scroll (mapped to regular scroll).
 * `wait`: Wait specified seconds for the change to happen.
 * `terminate`: Terminate the current task and report its completion status.
+* `answer`: Answer a question and terminate the task (with status "success").
 """.strip(),
                 "enum": [
                     "key",
@@ -54,6 +56,7 @@ The action to perform. The available actions are:
                     "hscroll",
                     "wait",
                     "terminate",
+                    "answer",
                 ],
                 "type": "string",
             },
@@ -62,7 +65,7 @@ The action to perform. The available actions are:
                 "type": "array",
             },
             "text": {
-                "description": "Required only by `action=type`.",
+                "description": "Required only by `action=type` and `action=answer`.",
                 "type": "string",
             },
             "coordinate": {
@@ -113,6 +116,8 @@ The action to perform. The available actions are:
             return self._wait(params["time"])
         elif action == "terminate":
             return self._terminate(params["status"])
+        elif action == "answer":
+            return self._answer(params["text"])
         else:
             raise ValueError(f"Invalid action: {action}")
 
@@ -241,6 +246,11 @@ The action to perform. The available actions are:
         if seconds < 0:
             raise ValueError(f"time must be >= 0, got: {time}")
         return self._script([f"time.sleep({seconds})"])
+
+    def _answer(self, text: str):
+        if not isinstance(text, str):
+            raise ValueError(f"text must be a string, got: {type(text)}")
+        return "DONE"
 
     def _terminate(self, status: str):
         if status.lower().strip() == "success":
