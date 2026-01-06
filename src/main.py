@@ -38,4 +38,18 @@ if __name__ == "__main__":
     DISABLE_RELOAD = os.getenv("DISABLE_RELOAD", "false").lower() == "true"
     PORT = int(os.getenv("PORT", "9876"))
     
-    uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=not DISABLE_RELOAD)
+    #uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=not DISABLE_RELOAD)
+    import base64
+    from agents.agent_factory import build_agent
+    
+    agent = build_agent("qwen3-vl-32b-thinking")
+
+    with open(r"C:\Users\yilma\Desktop\Projects\optimizing-agent-fidelity-ma\data\test-image.png", "rb") as f:
+        img_bytes = f.read()
+        b64_screenshot = base64.b64encode(img_bytes).decode("utf-8")
+    
+    response = agent.predict(
+        screenshot=b64_screenshot,
+        task="Click on 'Sign in'",
+    )
+    

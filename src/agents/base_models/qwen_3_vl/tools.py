@@ -1,4 +1,4 @@
-from typing import Union, Tuple, List
+from typing import Union, Tuple, List, Iterable
 
 from qwen_agent.tools.base import BaseTool, register_tool
 
@@ -6,6 +6,9 @@ from qwen_agent.tools.base import BaseTool, register_tool
 
 @register_tool("computer_use")
 class ComputerUse(BaseTool):
+    _SLEEP_AFTER_CLICK_S = 0.2
+    _SLEEP_SHORT_S = 0.1
+    _SLEEP_DRAG_TAP_S = 0.05
     @property
     def description(self):
         return f"""
@@ -51,7 +54,6 @@ The action to perform. The available actions are:
                     "hscroll",
                     "wait",
                     "terminate",
-                    "answer",
                 ],
                 "type": "string",
             },
@@ -60,7 +62,7 @@ The action to perform. The available actions are:
                 "type": "array",
             },
             "text": {
-                "description": "Required only by `action=type` and `action=answer`.",
+                "description": "Required only by `action=type`.",
                 "type": "string",
             },
             "coordinate": {
@@ -94,7 +96,7 @@ The action to perform. The available actions are:
         params = self._verify_json_format_args(params)
         action = params["action"]
         if action in ["left_click", "right_click", "middle_click", "double_click","triple_click"]:
-            return self._mouse_click(action)
+            return self._mouse_click(action, params.get("coordinate"))
         elif action == "key":
             return self._key(params["keys"])
         elif action == "type":
@@ -114,32 +116,146 @@ The action to perform. The available actions are:
         else:
             raise ValueError(f"Invalid action: {action}")
 
-    def _mouse_click(self, button: str):
-        raise NotImplementedError()
+    def _script(self, lines: Iterable[str]) -> str:
+        return "\n".join([line for line in lines if line is not None and str(line).strip() != ""]).rstrip()
+
+    def _clamp_xy(self, coordinate: Tuple[int, int]) -> Tuple[int, int]:
+        if not isinstance(coordinate, (list, tuple)) or len(coordinate) != 2:
+            raise ValueError(f"coordinate must be a (x, y) pair, got: {coordinate}")
+        x_raw, y_raw = coordinate
+        try:
+            x = int(round(float(x_raw)))
+            y = int(round(float(y_raw)))
+        except Exception as e:
+            raise ValueError(f"coordinate values must be numeric, got: {coordinate}") from e
+
+        x = max(0, min(self.display_width_px - 1, x))
+        y = max(0, min(self.display_height_px - 1, y))
+        return x, y
+
+    def _normalize_key(self, key: str) -> str:
+        k = key.strip().lower()
+        conversion = {
+            "page_down": "pagedown",
+            "pageup": "pageup",
+            "page_up": "pageup",
+            "pagedown": "pagedown",
+            "super": "win",
+            "super_l": "win",
+            "escape": "esc",
+            "return": "enter",
+        }
+        return conversion.get(k, k)
+
+    def _mouse_click(self, button: str, coordinate: Tuple[int, int] | None):
+        click_map = {
+            "left_click": "click",
+            "right_click": "rightClick",
+            "middle_click": "middleClick",
+            "double_click": "doubleClick",
+            # PyAutoGUI does have tripleClick on some versions, but keep it portable.
+            "triple_click": "doubleClick",
+        }
+        fn = click_map.get(button)
+        if fn is None:
+            raise ValueError(f"Invalid click button/action: {button}")
+
+        lines: list[str] = []
+        if coordinate is None:
+            lines.append(f"pyautogui.{fn}()")
+        else:
+            x, y = self._clamp_xy(coordinate)
+            lines.append(f"pyautogui.{fn}({x}, {y})")
+
+        # Give the UI a moment to react to clicks.
+        lines.append(f"time.sleep({self._SLEEP_AFTER_CLICK_S})")
+        return self._script(lines)
 
     def _key(self, keys: List[str]):
-        raise NotImplementedError()
+        if not isinstance(keys, list) or not keys:
+            raise ValueError(f"keys must be a non-empty list, got: {keys}")
+
+        normalized = [self._normalize_key(str(k)) for k in keys if str(k).strip()]
+        if not normalized:
+            raise ValueError(f"keys must contain at least one key, got: {keys}")
+
+        lines: list[str] = []
+        for k in normalized:
+            lines.append(f"pyautogui.keyDown({k!r})")
+        for k in reversed(normalized):
+            lines.append(f"pyautogui.keyUp({k!r})")
+
+        # Small pause to allow shortcuts to take effect.
+        lines.append(f"time.sleep({self._SLEEP_SHORT_S})")
+        return self._script(lines)
 
     def _type(self, text: str):
-        raise NotImplementedError()
+        if not isinstance(text, str):
+            raise ValueError(f"text must be a string, got: {type(text)}")
+
+        lines: list[str] = []
+        parts = text.split("\n")
+        for idx, part in enumerate(parts):
+            if part:
+                lines.append(f"pyautogui.typewrite({part!r}, interval=0.05)")
+            if idx < len(parts) - 1:
+                lines.append("pyautogui.press('enter')")
+
+        # Typing itself is paced; add only a small pause after.
+        lines.append(f"time.sleep({self._SLEEP_SHORT_S})")
+        return self._script(lines)
 
     def _mouse_move(self, coordinate: Tuple[int, int]):
-        raise NotImplementedError()
+        x, y = self._clamp_xy(coordinate)
+        # Short duration makes movement visible but fast.
+        return self._script([f"pyautogui.moveTo({x}, {y}, duration=0.2)"])
 
     def _left_click_drag(self, coordinate: Tuple[int, int]):
-        raise NotImplementedError()
+        x, y = self._clamp_xy(coordinate)
+        lines = [
+            "pyautogui.mouseDown()",
+            f"time.sleep({self._SLEEP_DRAG_TAP_S})",
+            f"pyautogui.dragTo({x}, {y}, duration=0.5)",
+            "pyautogui.mouseUp()",
+            f"time.sleep({self._SLEEP_AFTER_CLICK_S})",
+        ]
+        return self._script(lines)
 
     def _scroll(self, pixels: int):
-        raise NotImplementedError()
+        try:
+            amt = int(round(float(pixels)))
+        except Exception as e:
+            raise ValueError(f"pixels must be numeric, got: {pixels}") from e
+
+        # Positive scrolls up, negative scrolls down (pyautogui convention).
+        return self._script([f"pyautogui.scroll({amt})", f"time.sleep({self._SLEEP_SHORT_S})"])
 
     def _hscroll(self, pixels: int):
-        raise NotImplementedError()
+        # Horizontal scroll isn't consistently supported across platforms; try it, fallback to scroll.
+        try:
+            amt = int(round(float(pixels)))
+        except Exception as e:
+            raise ValueError(f"pixels must be numeric, got: {pixels}") from e
 
-    def _answer(self, text: str):
-        raise NotImplementedError()
+        return self._script([
+            "try:",
+            f"    pyautogui.hscroll({amt})",
+            "except Exception:",
+            f"    pyautogui.scroll({amt})",
+            f"time.sleep({self._SLEEP_SHORT_S})",
+        ])
 
     def _wait(self, time: int):
-        raise NotImplementedError()
+        try:
+            seconds = float(time)
+        except Exception as e:
+            raise ValueError(f"time must be numeric seconds, got: {time}") from e
+
+        if seconds < 0:
+            raise ValueError(f"time must be >= 0, got: {time}")
+        return self._script([f"time.sleep({seconds})"])
 
     def _terminate(self, status: str):
-        raise NotImplementedError()
+        if status.lower().strip() == "success":
+            return "DONE"
+        return "FAIL"

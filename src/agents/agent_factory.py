@@ -7,4 +7,9 @@ def build_agent(agent_type: str) -> Agent:
         return BaseAnthropicAgent(
             model="claude-sonnet-4.5",
         )
+    elif agent_type == "qwen3-vl-32b-thinking":
+        from agents.base_models.qwen_3_vl.qwen_vl_agent import QwenAgent
+        return QwenAgent(
+            model="qwen3-vl",
+        )
     raise ValueError(f"Unknown agent type: {agent_type}")
