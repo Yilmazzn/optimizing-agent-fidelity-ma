@@ -45,7 +45,7 @@ if __name__ == "__main__":
     # from agents.agent_factory import build_agent
 
     # agent = build_agent("qwen3-vl-32b-thinking")
-    # img_filepath = r"C:\Users\yilma\Desktop\Projects\OSWorld-MA\results\pyautogui\screenshot\qwen3-vl-32b-thinking\chrome\bb5e4c0d-f964-439c-97b6-bdb9747de3f4\step_1_20260107@001350130618.png"
+    # img_filepath = r"C:\Users\yilma\Desktop\Projects\OSWorld-MA\results\pyautogui\screenshot\anthropic-claude-sonnet-4.5\chrome\da46d875-6b82-4681-9284-653b0c7ae241\step_1_20260104@210922089788.png"
     # with open(img_filepath, "rb") as f:
     #     img_bytes = f.read()
     #     b64_screenshot = base64.b64encode(img_bytes).decode("utf-8")
@@ -69,7 +69,7 @@ if __name__ == "__main__":
 
     # response = agent.predict(
     #     screenshot=b64_screenshot,
-    #     task="Click on the three dots top right",
+    #     task="Move the mouse on the top right and click on the three dots to open the menu.",
     # )
 
     

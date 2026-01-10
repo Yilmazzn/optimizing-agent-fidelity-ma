@@ -446,8 +446,8 @@ class BaseAnthropicAgent(Agent):
                 expected_outcome += f" with modifiers '{text}'"
             
         elif action == "wait":
-            result += "pyautogui.sleep(1)\n"
-            expected_outcome = "Waited for 1 seconds"
+            result += "pyautogui.sleep(5)\n"
+            expected_outcome = "Waited for 5 seconds"
         elif action == "fail":
             result += "FAIL"
             expected_outcome = "Finished"

@@ -1,11 +1,12 @@
 import json
+from loguru import logger
 import openai
 import base64
 import shutil
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential
 from agents.agent import Agent
-from agents.base_models.qwen_3_vl.prompts import QWEN_SYSTEM_PROMPT
+from agents.base_models.qwen_3_vl.prompts import QWEN_SYSTEM_PROMPT, QWEN_SYSTEM_PROMPT_V2
 from agents.base_models.qwen_3_vl.tools import ComputerUse
 from agents.base_models.qwen_3_vl import utils as qwen_utils
 from domain.request import AgentPredictionResponse, TokenUsage
@@ -21,17 +22,18 @@ from qwen_agent.utils.output_beautify import typewriter_print, multimodal_typewr
 
 from utils import VIEWPORT_SIZE, expect_env_var, map_coords_to_screen
 
-_INFERENCE_MODEL_MAP = {
-    "qwen3-vl": "qwen3-vl-32b-thinking",
-}
+class ToolCallExtractionError(Exception):
+    pass
 
 # https://github.com/QwenLM/Qwen3-VL/blob/main/cookbooks/computer_use.ipynb
 
 class QwenAgent(Agent):
 
-    def __init__(self, model: str, image_size=(1920, 1080), **kwargs) -> None:
-        super().__init__(name=model, **kwargs)
-        self.model = model
+    def __init__(
+        self, 
+        **kwargs
+    ) -> None:
+        super().__init__(name="qwen3-vl-32b-thinking", **kwargs)
 
         # qwen 3 vl trained on 1000x1000 coordinate system
         self.computer_use_tool = ComputerUse(
@@ -43,14 +45,9 @@ class QwenAgent(Agent):
 
         self.image_size = (1000, 1000) # for rescaling coordinates (dont scale image before)
     
-    
-        self.inference_model = _INFERENCE_MODEL_MAP.get(model, model)
-        self.enable_thinking = True
-        self.thinking_budget = 4096
+        self.inference_model = "Qwen/Qwen3-VL-32B-Thinking"
         self.system_prompt = QWEN_SYSTEM_PROMPT
         
-        _base_url = expect_env_var("ALIBABA_BASE_URL")
-        _api_key = expect_env_var("ALIBABA_API_KEY")
         self.client = openai.OpenAI(
             base_url=expect_env_var("ALIBABA_BASE_URL"),
             api_key=expect_env_var("ALIBABA_API_KEY")
@@ -78,11 +75,49 @@ class QwenAgent(Agent):
         )
         return result
 
+    def _extract_tool_calls(self, text: str) -> list[dict]:
+        blocks: list[str] = []
+        open_tag = "<tool_call>"
+        close_tag = "</tool_call>"
+
+        i = 0
+        while True:
+            start = text.find(open_tag, i)
+            if start == -1:
+                break
+            end = text.find(close_tag, start + len(open_tag))
+            if end == -1:
+                raise ToolCallExtractionError("No </tool_call> found for a <tool_call> block.")
+            raw = text[start + len(open_tag):end].strip()
+            if raw:
+                blocks.append(raw)
+            i = end + len(close_tag)
+
+        tool_calls = []
+        for block in blocks:
+            try:
+                tool_call = json.loads(block)
+            except json.JSONDecodeError as e:
+                raise ToolCallExtractionError(f"Failed to parse tool call JSON: {e}")
+            tool_calls.append(tool_call)
+        return tool_calls
+    
+    # to reduce load on RAM hopefully
+    def _clean_history_from_images(self):
+        amount_images_kept = 0
+        for i in reversed(range(len(self.history))):
+            if "screenshot" not in self.history[i]:
+                continue
+            if amount_images_kept < self.max_images_in_history:
+                amount_images_kept += 1
+                continue
+            del self.history[i]["screenshot"]
 
     def predict(self, screenshot: str, task: str) -> AgentPredictionResponse:
         self.history.append({
             "screenshot": screenshot,
         })
+        self._clean_history_from_images()
 
         resized_height, resized_width = qwen_utils.smart_resize(
             width=1920,
@@ -145,23 +180,22 @@ class QwenAgent(Agent):
         # make API call
         result = self._make_call(messages=messages)
         output_text = result.choices[0].message.content
-        cached_tokens = result.usage.prompt_tokens_details.cached_tokens
+        cached_tokens = 0
+        if hasattr(result.usage, "prompt_tokens_details") and hasattr(result.usage.prompt_tokens_details, "cached_tokens"):
+            cached_tokens = result.usage.prompt_tokens_details.cached_tokens
+
         token_usage = TokenUsage(
             prompt_tokens=result.usage.prompt_tokens,
             completion_tokens=result.usage.completion_tokens,
             cached_prompt_tokens=cached_tokens if cached_tokens else 0,
         )
+
         
-    
-        # handle tool calls in output text
-        if "<tool_call>" not in output_text:
-            raise ValueError("No <tool_call> found in the model output.")
-        if "</tool_call>" not in output_text:
-            raise ValueError("No </tool_call> found in the model output.")
         
         try:
-            action = json.loads(output_text.split('<tool_call>\n')[1].split('\n</tool_call>')[0])
-        except json.JSONDecodeError as e:
+            actions = self._extract_tool_calls(output_text)
+        except ToolCallExtractionError as e:
+            logger.error(f"Tool call extraction error: {e}")
             return AgentPredictionResponse(
                 pyautogui_actions="FAIL",
                 usage=token_usage,
@@ -169,22 +203,27 @@ class QwenAgent(Agent):
                 status="fail"
             )
         
-        coordinate = action.get("arguments", {}).get("coordinate")
-        if coordinate: 
-            coordinate = map_coords_to_screen(
-                coords=tuple(coordinate),
-                scr_size=(1000, 1000),
-                target_size=(resized_width, resized_height)
-            )
-            coordinate = map_coords_to_screen(
-                coords=tuple(coordinate),
-                scr_size=(resized_width, resized_height),
-                target_size=VIEWPORT_SIZE
-            )
-            action["arguments"]["coordinate"] = list(coordinate)
+        # scale back coordinates
+        for action in actions:
+            coordinate = action.get("arguments", {}).get("coordinate")
+            if coordinate: 
+                coordinate = map_coords_to_screen(
+                    coords=tuple(coordinate),
+                    scr_size=(1000, 1000),
+                    target_size=(resized_width, resized_height)
+                )
+                coordinate = map_coords_to_screen(
+                    coords=tuple(coordinate),
+                    scr_size=(resized_width, resized_height),
+                    target_size=VIEWPORT_SIZE
+                )
+                action["arguments"]["coordinate"] = list(coordinate)
 
+        pyautogui_actions = []
         try:
-            pyautogui_actions = self.computer_use_tool.call(action["arguments"])
+            for action in actions:
+                pyautogui_action = self.computer_use_tool.call(action["arguments"])
+                pyautogui_actions.append(pyautogui_action)
         except Exception as e:
             return AgentPredictionResponse(
                 pyautogui_actions="FAIL",
@@ -192,9 +231,14 @@ class QwenAgent(Agent):
                 response=output_text + f"\nFailed to perform tool call: {str(e)}",
                 status="fail"
             )
+        pyautogui_actions = "\n\n".join(pyautogui_actions)
 
         self.history[-1]["agent_response"] = output_text
-        self.history[-1]["tool_result"] = f"Performed {action['arguments']}"
+        
+        tool_results_str = []
+        for action in actions:
+            tool_results_str.append(f"Called {action['name']} with arguments {action['arguments']}")
+        self.history[-1]["tool_result"] = "\n".join(tool_results_str)
 
 
         return AgentPredictionResponse(
@@ -202,3 +246,9 @@ class QwenAgent(Agent):
             usage=token_usage,
             response=output_text
         )
+
+
+class QwenAgentV2(QwenAgent):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.system_prompt = QWEN_SYSTEM_PROMPT_V2

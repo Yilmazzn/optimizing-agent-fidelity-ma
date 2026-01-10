@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 class AgentPredictionRequest(BaseModel):
     screenshot: str # base64-encoded
+    terminal_output: Optional[str] = None
 
 class TokenUsage(BaseModel):
     prompt_tokens: int

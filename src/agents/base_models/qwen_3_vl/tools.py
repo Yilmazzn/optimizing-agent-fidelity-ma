@@ -73,7 +73,7 @@ The action to perform. The available actions are:
                 "type": "array",
             },
             "pixels": {
-                "description": "The amount of scrolling to perform. Positive values scroll up, negative values scroll down. Required only by `action=scroll` and `action=hscroll`.",
+                "description": "The units of scrolling to perform. Positive values scroll up, negative values scroll down. Required only by `action=scroll` and `action=hscroll`.",
                 "type": "number",
             },
             "time": {
@@ -186,11 +186,21 @@ The action to perform. The available actions are:
         if "\\n" in text and "\n" not in text:
             text = text.replace("\\r\\n", "\n").replace("\\n", "\n")
 
+        # Same for tab: convert literal "\\t" to actual tab character.
+        if "\\t" in text and "\t" not in text:
+            text = text.replace("\\t", "\t")
+
         lines: list[str] = []
+        # Split by newlines first, then handle tabs within each line.
         parts = text.split("\n")
         for idx, part in enumerate(parts):
-            if part:
-                lines.append(f"pyautogui.typewrite({part!r}, interval=0.05)")
+            # Split each part by tabs and press tab key between segments.
+            tab_segments = part.split("\t")
+            for tab_idx, segment in enumerate(tab_segments):
+                if segment:
+                    lines.append(f"pyautogui.typewrite({segment!r}, interval=0.05)")
+                if tab_idx < len(tab_segments) - 1:
+                    lines.append("pyautogui.press('tab')")
             if idx < len(parts) - 1:
                 lines.append("pyautogui.press('enter')")
 
