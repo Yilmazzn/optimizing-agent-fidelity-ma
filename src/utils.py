@@ -37,6 +37,14 @@ def map_coords_to_screen(
 
     return mapped_x, mapped_y
 
+def _contains_chinese(text: str) -> bool:
+    return any(
+        '\u4e00' <= ch <= '\u9fff'      # CJK Unified Ideographs
+        or '\u3400' <= ch <= '\u4dbf'   # CJK Extension A
+        or '\U00020000' <= ch <= '\U0002A6DF'  # CJK Extension B
+        for ch in text
+    )
+
 
 def fix_pyautogui_script(pyautogui_script: str) -> str:
     """
@@ -76,6 +84,17 @@ def fix_pyautogui_script(pyautogui_script: str) -> str:
                 fixed_lines.extend(new_lines)
                 continue
         
+        if ("pyautogui.write" in line or "pyautogui.press" in line or "pyautogui.typewrite" in line) and _contains_chinese(line):
+            # Extract the string argument using non-greedy match
+            string_match = re.search(r'(["\'])((?:\\.|(?!\1).)*)\1', line)
+            if string_match:
+                indent = line[:len(line) - len(line.lstrip())]
+                fixed_lines.append(f"{indent}import pyperclip")
+                fixed_lines.append(f"{indent}# Using clipboard to handle Chinese characters")
+                fixed_lines.append(f"{indent}pyperclip.copy({string_match.group(1)}{string_match.group(2)}{string_match.group(1)})")
+                fixed_lines.append(f"{indent}pyautogui.hotkey('ctrl', 'v')")
+                continue
+
         fixed_lines.append(line)
 
     return "\n".join(fixed_lines)

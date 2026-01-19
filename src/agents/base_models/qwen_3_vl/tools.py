@@ -83,7 +83,7 @@ The action to perform. The available actions are:
             "status": {
                 "description": "The status of the task. Required only by `action=terminate`.",
                 "type": "string",
-                "enum": ["success", "failure"],
+                "enum": ["success", "failure", "infeasible"],
             },
         },
         "required": ["action"],

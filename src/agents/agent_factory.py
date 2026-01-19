@@ -13,7 +13,7 @@ def build_agent(agent_type: str, vm_http_server: str = None) -> Agent:
         return QwenAgentV2()
     elif agent_type == "custom-1":
         from agents.hybrid.agent import Custom1Agent
-        return Custom1Agent()
+        return Custom1Agent(vm_http_server=vm_http_server)
     elif agent_type == "custom-2":
         from agents.hybrid.agent import Custom2Agent
         if vm_http_server is None:

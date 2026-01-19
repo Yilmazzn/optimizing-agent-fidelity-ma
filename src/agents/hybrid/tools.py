@@ -129,13 +129,13 @@ _computer_use_tools = [
     {
         "type": "function",
         "name": "finish",
-        "description": "Finishes the current task execution if successful or failed after completing the task or failing to do so, and reports its final status. To be used at last after completing the task.",
+        "description": "Finishes the current task execution if successful, failed, or infeasible after completing the task or failing to do so, and reports its final status. To be used at last after completing the task.",
         "parameters": {
             "type": "object",
             "properties": {
                 "status": {
                     "type": "string",
-                    "enum": ["success", "failure"],
+                    "enum": ["success", "failure", "infeasible"],
                     "description": "Final execution status of the task."
                 }
             },
@@ -165,6 +165,45 @@ _computer_use_tools = [
     }
 ]
 
+_python_tool = {
+    "type": "function",
+    "name": "execute_python_code",
+    "description": "Executes a snippet of Python code in a secure sandboxed environment and returns the output or any errors encountered during execution." +
+                    "The Python should be the raw complete code snippet ('python -c' is not required).",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "code": {
+                "type": "string",
+                "description": "The Python code snippet to be executed."
+            }
+        },
+        "required": ["code"],
+        "additionalProperties": False
+    }
+}
+
+_terminal_tool =  {
+    "type": "function",
+    "name": "execute_terminal_command",
+    "description": "Executes a terminal command on the system and returns the command output or any errors encountered during execution.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "description": "The terminal command to be executed."
+            },
+            "working_dir": {
+                "type": "string",
+                "description": "The working directory in which to execute the command. If not specified, uses the default working dir."
+            }
+        },
+        "required": ["command"],
+        "additionalProperties": False
+    }
+}
+
 def _normalize_key(key: str) -> str:
     k = key.strip().lower()
     conversion = {
@@ -180,6 +219,7 @@ def _normalize_key(key: str) -> str:
         "arrowdown": "down",
         "arrowleft": "left",
         "arrowright": "right",
+        "meta": "win",
     }
     return conversion.get(k, k)
 
@@ -188,11 +228,24 @@ class ToolNotFoundError(Exception):
 
 class CuaToolSet:
 
-    def __init__(self, grounder: Grounder):
+    def __init__(self, 
+                 grounder: Grounder, 
+                 http_server: str, 
+                 enable_python_execution_tool: bool = False,
+                 enable_terminal_command_tool: bool = False
+        ):
         self.tools = _computer_use_tools
+        self.http_server = http_server
+        self.enable_python_execution_tool = enable_python_execution_tool
+        self.enable_terminal_command_tool = enable_terminal_command_tool
         self.grounder = grounder
 
-    def _parse_computer_use_action(self, tool_call: dict, screenshot: str) -> Tuple[str, str, tuple[int, int]]:
+        if self.enable_python_execution_tool:
+            self.tools.append(_python_tool)
+        if self.enable_terminal_command_tool:
+            self.tools.append(_terminal_tool)
+
+    def parse_action(self, tool_call: dict, screenshot: str) -> Tuple[str, str, tuple[int, int]]:
         name = tool_call.name
         args = json.loads(tool_call.arguments)
 
@@ -309,67 +362,42 @@ class CuaToolSet:
         elif name == "finish":
             _status = {
                 "success": "DONE",
-                "failure": "FAIL"
+                "failure": "FAIL",
+                "infeasible": "FAIL",
             }.get(status.lower().strip(), "FAIL")
             pyautogui_actions.append(_status)
             tool_result = f"Finished with status: {status}."
+        
+        elif self.enable_python_execution_tool and name == "execute_python_code":
+            code = args.get("code")
+            if code is None:
+                raise ValueError(f"execute_python_code requires 'code' argument. Got arguments {args}")
+            
+            result = self._execute_python_code(code=code)
+            if result["status"] == "error":
+                logs = result["output"]
+            else:
+                logs = result["message"]
+            tool_result = json.dumps({
+                "status": result["status"],
+                "output": logs,
+            }, indent=2)
+
+        elif self.enable_terminal_command_tool and name == "execute_terminal_command":
+            command = args.get("command")
+            working_dir = args.get("working_dir")
+            if command is None:
+                raise ValueError(f"execute_terminal_command requires 'command' argument. Got arguments {args}")
+            
+            result = self._execute_terminal_command(command=command, working_dir=working_dir)
+            tool_result = json.dumps(result, indent=2)
+
         else:
             raise ToolNotFoundError(f"Unknown tool call: {name}")
     
         return tool_result, "\n".join(pyautogui_actions), usage
     
-    
-    def parse_action(self, tool_call: dict, screenshot: str) -> Tuple[str, str, tuple[int, int]]:
-        try:
-            return self._parse_computer_use_action(tool_call, screenshot)
-        except ToolNotFoundError as e:
-            raise e
-
-class CuaToolSet2(CuaToolSet):
-
-    def __init__(self, grounder: Grounder, http_server: str):
-        super().__init__(grounder)
-        self.http_server = http_server
-        self.tools = self.tools + [
-            {
-                "type": "function",
-                "name": "execute_python_code",
-                "description": "Executes a snippet of Python code in a secure sandboxed environment and returns the output or any errors encountered during execution." +
-                                "The Python should be the raw complete code snippet ('python -c' is not required).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "code": {
-                            "type": "string",
-                            "description": "The Python code snippet to be executed."
-                        }
-                    },
-                    "required": ["code"],
-                    "additionalProperties": False
-                }
-            },
-            {
-                "type": "function",
-                "name": "execute_terminal_command",
-                "description": "Executes a terminal command on the system and returns the command output or any errors encountered during execution.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "command": {
-                            "type": "string",
-                            "description": "The terminal command to be executed."
-                        },
-                        "working_dir": {
-                            "type": "string",
-                            "description": "The working directory in which to execute the command. If not specified, uses the default working dir."
-                        }
-                    },
-                    "required": ["command"],
-                    "additionalProperties": False
-                }
-            }
-        ]
-    
+        
     @retry(
         reraise=True,
         stop=stop_after_attempt(3),
@@ -393,85 +421,4 @@ class CuaToolSet2(CuaToolSet):
         except Exception as e:
             logger.error("An error occurred while trying to execute the command: %s", traceback.format_exc())
             raise e
-        
-    @retry(
-        reraise=True,
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1.0, min=1.0, max=8.0)
-    )
-    def _execute_terminal_command(self, command: str, working_dir: str = None, timeout: int = 300) -> dict:
-        payload = json.dumps({
-            "script": command,
-            "timeout": timeout,
-            "working_dir": working_dir
-        })
-        try:
-            response = requests.post(
-                self.http_server + "/run_bash_script", 
-                headers={'Content-Type': 'application/json'},
-                data=payload, 
-                timeout=timeout,
-            )
-            if response.status_code == 200:
-                result = response.json()
-                logger.info("Bash script executed successfully with return code: %d", result.get("returncode", -1))
-                return result
-            else:
-                logger.error("Failed to execute bash script. Status code: %d, response: %s", 
-                            response.status_code, response.text)
-                logger.info("Retrying to execute bash script.")
-                raise Exception("Failed to execute bash script.")
-            
-        except requests.exceptions.ReadTimeout:
-            logger.error("Bash script execution timed out")
-            return {
-                "status": "error",
-                "output": "",
-                "error": f"Script execution timed out after {timeout} seconds",
-                "returncode": -1
-            }
-        except Exception as e:
-            logger.error("An error occurred while trying to execute the bash script: %s", e)
-            logger.info("Retrying to execute bash script.")
-            raise e
 
-    def parse_action(self, tool_call: dict, screenshot: str) -> Tuple[str, str, tuple[int, int]]:
-        try:
-            return super().parse_action(tool_call, screenshot)
-        except ToolNotFoundError:
-            pass
-
-        name = tool_call.name
-        args = json.loads(tool_call.arguments)
-
-        tool_result = ""
-        pyautogui_actions = []
-
-        if name == "execute_python_code":
-            code = args.get("code")
-            if code is None:
-                raise ValueError(f"execute_python_code requires 'code' argument. Got arguments {args}")
-            
-            result = self._execute_python_code(code=code)
-            if result["status"] == "error":
-                logs = result["output"]
-            else:
-                logs = result["message"]
-            tool_result = json.dumps({
-                "status": result["status"],
-                "output": logs,
-            }, indent=2)
-
-        elif name == "execute_terminal_command":
-            command = args.get("command")
-            working_dir = args.get("working_dir")
-            if command is None:
-                raise ValueError(f"execute_terminal_command requires 'command' argument. Got arguments {args}")
-            
-            result = self._execute_terminal_command(command=command, working_dir=working_dir)
-            tool_result = json.dumps(result)
-
-        else:
-            raise ToolNotFoundError(f"Unknown tool call: {name}")
-
-        return tool_result, "\n".join(pyautogui_actions), (0, 0)

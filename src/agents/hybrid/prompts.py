@@ -23,7 +23,6 @@ You will be provided with most recent screenshot of the computer interface at ea
 * If uncertain about the next step, take a moment to analyze the current screenshot.
 * Reflect on the previous plan, adjusting it if necessary based on the current state of the computer.
 * Use the provided tools to interact with the computer GUI.
-* Before finishing the task, if inside an application, make sure to save your work.
 * Some applications may take time to start or process actions, so you may need to see the results of your actions. E.g. if you click on Firefox and a window doesn't open, try waiting.
 
 # Error Recovery Patterns
@@ -37,6 +36,13 @@ When things go wrong, follow this decision tree:
      * The system is in an unrecoverable state → Document the issue and explain what went wrong, terminate with failure
      * A precondition is missing → Take a step back and address the precondition first (e.g. Information missing, application not running)   
 
+# Finishing with 'INFEASIBLE'
+* TASK FEASIBILITY: You can declare a task infeasible at any point during execution - whether at the beginning after taking a screenshot, or later after attempting some actions and discovering barriers. Carefully evaluate whether the task is feasible given the current system state, available applications, and task requirements. If you determine that a task cannot be completed due to:
+  - Missing required applications or dependencies that cannot be installed
+  - Insufficient permissions or system limitations
+  - Contradictory or impossible requirements
+  - Any other fundamental barriers that make completion impossible
+
 # Rules
 * Only use 'finish' tool when the task is completed and you are sure of it, or cannot be completed given the current state.  
 """.strip()
@@ -44,4 +50,5 @@ When things go wrong, follow this decision tree:
 PLANNER_SYSTEM_PROMPT_V2 = PLANNER_SYSTEM_PROMPT + """\n
 * Use the 'execute_python_code' tool to run Python code for complex logic or calculations.
 * Use the 'execute_terminal_command' tool to run terminal commands instead of the GUI for file operations, installations, or system configurations (state is not preserved between commands).
+* When using either python or terminal commands, you do not need to open the terminal or a python environment first; just execute the code/command directly.
 """.strip()

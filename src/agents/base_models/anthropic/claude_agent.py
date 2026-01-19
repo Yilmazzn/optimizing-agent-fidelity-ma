@@ -40,6 +40,22 @@ _SYSTEM_PROMPT = f"""<SYSTEM_CAPABILITY>
 </SYSTEM_CAPABILITY>
 """
 
+_finish_tool = {
+    "name": "finish",
+    "description": "Finishes the current task execution if successful, failed, or infeasible after completing the task or failing to do so, and reports its final status. To be used at last after completing the task.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "status": {
+                "type": "string",
+                "enum": ["success", "failure", "infeasible"],
+                "description": "Final execution status of the task."
+            }
+        },
+        "required": ["status"],
+        "additionalProperties": False
+    }
+}
 
 def _is_retriable_anthropic_error(exc: Exception) -> bool:
     status_code = getattr(exc, "status_code", None)
@@ -80,8 +96,7 @@ class BaseAnthropicAgent(Agent):
         self.tools = [
             {"type": "computer_20250124", "name": "computer", "display_width_px": self.image_size[0],
                 "display_height_px": self.image_size[1]},
-            #{"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"},
-            #{"type": "bash_20250124", "name": "bash"}
+            _finish_tool,
         ]
         self.enable_prompt_caching = True
         self.thinking_enabled = True
@@ -247,8 +262,15 @@ class BaseAnthropicAgent(Agent):
         result = ""
         function_args = tool_call.input
 
-        if tool_call.name != "computer":
+        if tool_call.name not in ["computer", "finish"]:
             raise ValueError(f"Invalid tool call name: {tool_call}")
+
+        if tool_call.name == "finish":
+            status = function_args.get("status")
+            if status == "success":
+                return "DONE", "Task completed successfully."
+            else:  # failure or infeasible
+                return "FAIL", f"Task ended with status: {status}"
 
         if tool_call.name == "bash":
             return self.parse_actions_from_bash_tool(function_args)

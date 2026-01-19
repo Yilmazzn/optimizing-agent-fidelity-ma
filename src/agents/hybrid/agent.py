@@ -19,8 +19,8 @@ class Custom1Agent(Agent):
     Follows https://arxiv.org/pdf/2505.13227
     """
 
-    def __init__(self, name: str = "custom-1"):
-        super().__init__(name=name)
+    def __init__(self, vm_http_server: str):
+        super().__init__(name="custom-1")
 
         self.grounding_model = "Qwen/Qwen3-VL-32B-Instruct"
         self.planner_client = openai.OpenAI(
@@ -166,5 +166,5 @@ class Custom2Agent(Custom1Agent):
         super().__init__(name="custom-2")
         self.system_prompt = PLANNER_SYSTEM_PROMPT_V2
         self.grounder = Qwen3VLGrounder(model="qwen/qwen3-vl-32b-instruct")
-        self.tool_set = CuaToolSet2(grounder=self.grounder, http_server=vm_http_server)
+        self.tool_set = CuaToolSet(grounder=self.grounder, enable_python_execution_tool=True, enable_terminal_command_tool=True, http_server=vm_http_server)
     
