@@ -79,3 +79,6 @@ def fix_pyautogui_script(pyautogui_script: str) -> str:
         fixed_lines.append(line)
 
     return "\n".join(fixed_lines)
+
+def convert_to_base64_image_url(b64_image: str) -> str:
+    return f"data:image/png;base64,{b64_image}"

@@ -63,11 +63,11 @@ class QwenAgent(Agent):
         system_message = system_message[0].model_dump()
         return system_message
     
-    #@retry(
-    #    reraise=True,
-    #    stop=stop_after_attempt(4),
-    #    wait=wait_exponential(multiplier=1.0, min=1.0, max=8.0),
-    #)
+    @retry(
+       reraise=True,
+       stop=stop_after_attempt(4),
+       wait=wait_exponential(multiplier=1.0, min=1.0, max=8.0),
+    )
     def _make_call(self, messages: list[dict]):
         result = self.client.chat.completions.create(
             model = self.inference_model,

@@ -1,11 +1,6 @@
-import sys
 from typing import Annotated
 from fastapi import FastAPI, HTTPException, Query, Depends
 from loguru import logger
-
-# Configure loguru to include timestamps
-logger.remove()
-logger.add(sys.stderr, format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}")
 
 from agents.agent import Agent
 from agents.agent_factory import build_agent
@@ -49,11 +44,12 @@ def include_routes(app: FastAPI):
     def init(init_request: InitRequest, session_id: SessionId):
         agent = build_agent(
             agent_type=init_request.agent,
+            vm_http_server=init_request.vm_http_server,
         )
         sessions[session_id] = {"agent": agent, "task": None}
-        logger.info(f"Initialized agent: '{agent}' for session: '{session_id}'")
+        logger.info(f"Initialized agent: '{agent.name}' for session: '{session_id}'")
         agent.reset()
-        return agent.get_config()
+        # return agent.get_config()
 
     @app.post("/task", status_code=200)
     def set_task(set_task_request: SetTaskRequest, session: dict = Depends(get_session)):

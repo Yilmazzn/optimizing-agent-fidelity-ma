@@ -6,13 +6,11 @@ from pydantic import BaseModel
 
 class AgentPredictionRequest(BaseModel):
     screenshot: str # base64-encoded
-    terminal_output: Optional[str] = None
 
 class TokenUsage(BaseModel):
     prompt_tokens: int
-    cached_prompt_tokens: Optional[int]
+    cached_prompt_tokens: Optional[int] = 0
     completion_tokens: int
-
 
 class AgentPredictionResponse(BaseModel):
     response: Any
@@ -23,6 +21,7 @@ class AgentPredictionResponse(BaseModel):
 # ===== INIT
 class InitRequest(BaseModel):
     agent: str
+    vm_http_server: Optional[str] = None
 
 class SetTaskRequest(BaseModel):
     task: str

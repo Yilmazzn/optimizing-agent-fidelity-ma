@@ -72,8 +72,8 @@ The action to perform. The available actions are:
                 "description": "(x, y): The x (pixels from the left edge) and y (pixels from the top edge) coordinates to move the mouse to.",
                 "type": "array",
             },
-            "pixels": {
-                "description": "The units of scrolling to perform. Positive values scroll up, negative values scroll down. Required only by `action=scroll` and `action=hscroll`.",
+            "scroll_amount": {
+                "description": "The number of “clicks” on the mouse scroll wheel to scroll. Positive values scroll up, negative values scroll down. Required only by `action=scroll` and `action=hscroll`.",
                 "type": "number",
             },
             "time": {
@@ -109,9 +109,9 @@ The action to perform. The available actions are:
         elif action == "left_click_drag":
             return self._left_click_drag(params["coordinate"])
         elif action == "scroll":
-            return self._scroll(params["pixels"])
+            return self._scroll(params["scroll_amount"])
         elif action == "hscroll":
-            return self._hscroll(params["pixels"])
+            return self._hscroll(params["scroll_amount"])
         elif action == "wait":
             return self._wait(params["time"])
         elif action == "terminate":
@@ -218,19 +218,17 @@ The action to perform. The available actions are:
             "pyautogui.mouseDown()",
             f"time.sleep({self._SLEEP_DRAG_TAP_S})",
             f"pyautogui.dragTo({x}, {y}, duration=0.5)",
-            "pyautogui.mouseUp()",
-            f"time.sleep({self._SLEEP_AFTER_CLICK_S})",
+            "pyautogui.mouseUp()"
         ]
         return self._script(lines)
 
-    def _scroll(self, pixels: int):
+    def _scroll(self, scroll_amount: int):
         try:
-            amt = int(round(float(pixels)))
+            amt = int(round(float(scroll_amount)))
         except Exception as e:
-            raise ValueError(f"pixels must be numeric, got: {pixels}") from e
-
+            raise ValueError(f"scroll_amount must be numeric, got: {scroll_amount}") from e
         # Positive scrolls up, negative scrolls down (pyautogui convention).
-        return self._script([f"pyautogui.scroll({amt})", f"time.sleep({self._SLEEP_SHORT_S})"])
+        return self._script([f"pyautogui.scroll({amt})"])
 
     def _hscroll(self, pixels: int):
         # Horizontal scroll isn't consistently supported across platforms; try it, fallback to scroll.
@@ -243,8 +241,7 @@ The action to perform. The available actions are:
             "try:",
             f"    pyautogui.hscroll({amt})",
             "except Exception:",
-            f"    pyautogui.scroll({amt})",
-            f"time.sleep({self._SLEEP_SHORT_S})",
+            f"    pyautogui.scroll({amt})"
         ])
 
     def _wait(self, time: int):

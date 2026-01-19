@@ -99,7 +99,7 @@ class Agent(abc.ABC):
         return mapped_x, mapped_y
 
     @abc.abstractmethod
-    def predict(self, screenshot: str, task) -> AgentPredictionResponse:
+    def predict(self, screenshot: str, task, python_output: dict = None, terminal_output: dict = None) -> AgentPredictionResponse:
         pass
 
     def reset(self):
