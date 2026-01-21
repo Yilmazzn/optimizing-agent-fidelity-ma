@@ -1,11 +1,12 @@
+from datetime import datetime
 from typing import Annotated
 from fastapi import FastAPI, HTTPException, Query, Depends
 from loguru import logger
 
 from agents.agent import Agent
 from agents.agent_factory import build_agent
-from domain.request import AgentPredictionRequest, AgentPredictionResponse, InitRequest, SetTaskRequest
-from utils import fix_pyautogui_script
+from domain.request import AgentPredictionRequest, AgentPredictionResponse, AgentPredictionResponseLog, InitRequest, SetTaskRequest
+from utils import fix_pyautogui_script, log_agent_response
 
 
 # Session storage for agents and tasks
@@ -46,7 +47,7 @@ def include_routes(app: FastAPI):
             agent_type=init_request.agent,
             vm_http_server=init_request.vm_http_server,
         )
-        sessions[session_id] = {"agent": agent, "task": None}
+        sessions[session_id] = {"agent": agent, "task": None, "predict_count": 0}
         logger.info(f"Initialized agent: '{agent.name}' for session: '{session_id}'")
         agent.reset()
         # return agent.get_config()
@@ -64,10 +65,26 @@ def include_routes(app: FastAPI):
         logger.info(f"Reset agent: '{agent}'")
         agent.reset()
         session["task"] = None
+        session["predict_count"] = 0
 
     @app.post("/predict", status_code=200)
-    def predict(prediction_request: AgentPredictionRequest, agent: Agent = Depends(get_agent), task: str = Depends(get_task)) -> AgentPredictionResponse:
+    def predict(prediction_request: AgentPredictionRequest, agent: Agent = Depends(get_agent), task: str = Depends(get_task), session: dict = Depends(get_session)) -> AgentPredictionResponse:
+        session["predict_count"] += 1
+        start_time = datetime.now()
         result = agent.predict(screenshot=prediction_request.screenshot, task=task)
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
         result.pyautogui_actions = fix_pyautogui_script(result.pyautogui_actions) 
+
+        agent_response_log = AgentPredictionResponseLog(
+            **result.model_dump(),
+            duration=duration,
+            task_id=prediction_request.task_id,
+            task=task,
+            domain=prediction_request.domain,
+        )
+        log_agent_response(agent_name=agent.name, agent_response_log=agent_response_log, start_new=(session["predict_count"] == 1))
+
         return result
 

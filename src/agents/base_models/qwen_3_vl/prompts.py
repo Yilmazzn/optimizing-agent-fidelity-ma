@@ -2,7 +2,7 @@ from datetime import datetime
 import json
 import os
 
-QWEN_SYSTEM_PROMPT = """
+QWEN_SYSTEM_PROMPT = f"""
 You are an AI agent designed to interact with a computer interface to accomplish user tasks using tools.
 
 * The current date is {datetime.today().strftime('%A, %B %d, %Y')}.

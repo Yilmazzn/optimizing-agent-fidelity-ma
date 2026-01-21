@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 class AgentPredictionRequest(BaseModel):
     screenshot: str # base64-encoded
+    task_id: str
+    domain: str
 
 class TokenUsage(BaseModel):
     prompt_tokens: int
@@ -17,6 +19,13 @@ class AgentPredictionResponse(BaseModel):
     pyautogui_actions: Optional[str]
     usage: TokenUsage
     status: str = "working" # or "done", "infeasible", "error"
+
+class AgentPredictionResponseLog(AgentPredictionResponse):
+    task_id: str
+    task: str
+    domain: str
+    duration: float # seconds
+
 
 # ===== INIT
 class InitRequest(BaseModel):

@@ -37,11 +37,14 @@ class Qwen3VLGrounder(Grounder):
        wait=wait_exponential(multiplier=1.0, min=1.0, max=8.0),
     )
     def _make_call(self, messages: list):
-        return self.client.chat.completions.create(
+        response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
         )
-
+        if response is None:
+            raise ValueError("No response from the grounding model.")
+        return response
+    
     # def _extract_tool_calls(self, text: str) -> list[dict]:
     #     blocks: list[str] = []
     #     open_tag = "<tool_call>"

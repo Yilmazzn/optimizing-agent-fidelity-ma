@@ -45,12 +45,12 @@ class QwenAgent(Agent):
 
         self.image_size = (1000, 1000) # for rescaling coordinates (dont scale image before)
     
-        self.inference_model = "Qwen/Qwen3-VL-32B-Thinking"
+        self.inference_model = "qwen/qwen3-vl-32b-instruct" # TODO change this to thinking after tests
         self.system_prompt = QWEN_SYSTEM_PROMPT
         
         self.client = openai.OpenAI(
-            base_url=expect_env_var("ALIBABA_BASE_URL"),
-            api_key=expect_env_var("ALIBABA_API_KEY")
+            base_url=expect_env_var("OPENROUTER_BASE_URL"),
+            api_key=expect_env_var("OPENROUTER_API_KEY")
         )
 
     def _get_system_message(self):

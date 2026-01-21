@@ -49,7 +49,7 @@ if __name__ == "__main__":
     #     screenshot=b64_screenshot, 
     #     # task="I want you to write 'Hello World' in B12",
     #     # task="Create a new Sheet and place the heads 'Name', 'Age', 'City' in cells A1, B1, C1 respectively."
-    #     task="Run a simple ls -a on the desktop",
+    #     task="Click on the chrome icon",
     # )
 
     # agent.predict(

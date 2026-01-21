@@ -45,10 +45,12 @@ When things go wrong, follow this decision tree:
 
 # Rules
 * Only use 'finish' tool when the task is completed and you are sure of it, or cannot be completed given the current state.  
+* If you need a fundamental workaround to complete the specified task, which deviates from the task description, you must declare the task infeasible.
+* Precisely follow the task instructions. If the user asks for something very specific, follow it exactly (e.g. show me ..., do not assume alternatives unless absolutely necessary).
 """.strip()
 
 PLANNER_SYSTEM_PROMPT_V2 = PLANNER_SYSTEM_PROMPT + """\n
 * Use the 'execute_python_code' tool to run Python code for complex logic or calculations.
-* Use the 'execute_terminal_command' tool to run terminal commands instead of the GUI for file operations, installations, or system configurations (state is not preserved between commands).
+* Use the 'execute_terminal_command' tool to run terminal commands instead of the GUI for file operations, installations, or system configurations (state is not preserved between commands). If stateful, consider using the GUI.
 * When using either python or terminal commands, you do not need to open the terminal or a python environment first; just execute the code/command directly.
 """.strip()

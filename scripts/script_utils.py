@@ -1,8 +1,9 @@
 import json
 import os
 from pathlib import Path
+import shutil
 
-
+EVALUATION_EXAMPLES = r"D:\Projects\OSWorld-MA\evaluation_examples\examples"
 RESULT_BASE_DIR = r"D:\Projects\OSWorld-MA\results\pyautogui\screenshot"
 
 def get_tasks(model: str):
@@ -47,3 +48,17 @@ def get_tasks(model: str):
                 "trajectories": trajs,
             }
             tasks.append(task_eval)
+
+    return tasks
+
+def delete_run(model: str, task_id: str):
+    _results_dir = os.path.join(RESULT_BASE_DIR, model)
+    for domain_dir in Path(_results_dir).iterdir():
+        if domain_dir.is_file():
+            continue
+        task_dir = domain_dir / task_id
+        if task_dir.exists() and task_dir.is_dir():
+            shutil.rmtree(task_dir)
+            print(f"Deleted task run: {task_id} under model {model}")
+            return
+    print(f"Task run not found for deletion: {task_id} under model {model}")

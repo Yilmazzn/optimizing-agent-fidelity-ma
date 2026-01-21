@@ -186,7 +186,7 @@ _python_tool = {
 _terminal_tool =  {
     "type": "function",
     "name": "execute_terminal_command",
-    "description": "Executes a terminal command on the system and returns the command output or any errors encountered during execution.",
+    "description": "Executes a temporary terminal command on the system and returns the command output or any errors encountered during execution.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -230,7 +230,7 @@ class CuaToolSet:
 
     def __init__(self, 
                  grounder: Grounder, 
-                 http_server: str, 
+                 http_server: str = None, 
                  enable_python_execution_tool: bool = False,
                  enable_terminal_command_tool: bool = False
         ):
@@ -239,6 +239,10 @@ class CuaToolSet:
         self.enable_python_execution_tool = enable_python_execution_tool
         self.enable_terminal_command_tool = enable_terminal_command_tool
         self.grounder = grounder
+
+        if self.enable_python_execution_tool or self.enable_terminal_command_tool:
+            if not self.http_server:
+                raise ValueError("http_server must be provided when coding tools are enabled.")
 
         if self.enable_python_execution_tool:
             self.tools.append(_python_tool)
@@ -419,6 +423,52 @@ class CuaToolSet:
             else:
                 return {"status": "error", "message": "Failed to execute command.", "output": None, "error": response.json()["error"]}
         except Exception as e:
-            logger.error("An error occurred while trying to execute the command: %s", traceback.format_exc())
+            logger.error(f"An error occurred while trying to execute the command: {traceback.format_exc()}")
             raise e
+        
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1.0, min=1.0, max=8.0)
+    )
+    def _execute_terminal_command(self, command: str, working_dir: str = None, timeout: int = 300) -> dict:
+        payload = json.dumps({
+            "script": command,
+            "timeout": timeout,
+            "working_dir": working_dir
+        })
+        try:
+            response = requests.post(
+                self.http_server + "/run_bash_script", 
+                headers={'Content-Type': 'application/json'},
+                data=payload, 
+                timeout=timeout,
+            )
+            if response.status_code == 200:
+                result = response.json()
+                logger.info(f"Bash script executed successfully with return code: {result.get('returncode', -1)}")
+                return result
+            elif response.status_code == 400:
+                return {
+                    "status": "error",
+                    "output": "",
+                    "error": f"Scipt execution failed with status code : {response.status_code}, error: {response.text}",
+                    "returncode": -1
+                }
+            else:
+                logger.error(f"Failed to execute bash script. Status code: {response.status_code}, response: {response.text}")
+                raise Exception("Failed to execute bash script.")
+            
+        except requests.exceptions.ReadTimeout:
+            logger.error("Bash script execution timed out")
+            return {
+                "status": "error",
+                "output": "",
+                "error": f"Script execution timed out after {timeout} seconds",
+                "returncode": -1
+            }
+        except Exception as e:
+            logger.error(f"An error occurred while trying to execute the bash script: {e}")
+            raise e
+
 

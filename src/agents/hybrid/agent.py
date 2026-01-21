@@ -6,7 +6,7 @@ import openai
 from tenacity import retry, stop_after_attempt, wait_exponential
 from agents.agent import Agent
 from agents.hybrid.prompts import PLANNER_SYSTEM_PROMPT, PLANNER_SYSTEM_PROMPT_V2
-from agents.hybrid.tools import CuaToolSet, CuaToolSet2
+from agents.hybrid.tools import CuaToolSet
 from agents.grounders.qwen3_vl import Qwen3VLGrounder
 from domain.request import AgentPredictionResponse, TokenUsage
 from utils import expect_env_var, fix_pyautogui_script
@@ -19,8 +19,8 @@ class Custom1Agent(Agent):
     Follows https://arxiv.org/pdf/2505.13227
     """
 
-    def __init__(self, vm_http_server: str):
-        super().__init__(name="custom-1")
+    def __init__(self, name: str = "custom-1"):
+        super().__init__(name=name)
 
         self.grounding_model = "Qwen/Qwen3-VL-32B-Instruct"
         self.planner_client = openai.OpenAI(
@@ -28,7 +28,7 @@ class Custom1Agent(Agent):
             api_key=expect_env_var("AZURE_OPENAI_API_KEY"),
         )
         self.tool_set = CuaToolSet(
-            grounder=Qwen3VLGrounder(model=self.grounding_model)
+            grounder=Qwen3VLGrounder(model=self.grounding_model),
         )
         self.system_prompt = PLANNER_SYSTEM_PROMPT
 
@@ -79,6 +79,7 @@ class Custom1Agent(Agent):
             },
             input=_input,
             previous_response_id=previous_response_id,
+            tool_choice="required",
         )
 
         self.history[-1]["response_id"] = response.id
@@ -162,8 +163,8 @@ class Custom1Agent(Agent):
     
 class Custom2Agent(Custom1Agent):
     """ same custom-1, however has coding tools (python/terminal)"""
-    def __init__(self, vm_http_server: str):
-        super().__init__(name="custom-2")
+    def __init__(self, vm_http_server: str, name: str = "custom-2"):
+        super().__init__(name=name)
         self.system_prompt = PLANNER_SYSTEM_PROMPT_V2
         self.grounder = Qwen3VLGrounder(model="qwen/qwen3-vl-32b-instruct")
         self.tool_set = CuaToolSet(grounder=self.grounder, enable_python_execution_tool=True, enable_terminal_command_tool=True, http_server=vm_http_server)
