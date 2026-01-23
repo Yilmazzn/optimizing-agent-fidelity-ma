@@ -88,3 +88,7 @@ def include_routes(app: FastAPI):
 
         return result
 
+    @app.post("/end_task", status_code=200)
+    def end_task(session: dict = Depends(get_session)):
+        agent = session.get("agent")
+        agent.end_task()

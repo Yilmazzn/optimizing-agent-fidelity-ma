@@ -23,7 +23,7 @@ Output: 'I see the blue "Submit" button at coordinates (450, 300)'.
 """
 
 class Qwen3VLGrounder(Grounder):
-    def __init__(self, model: str = "qwen-3-vl-32b-thinking"):
+    def __init__(self, model: str = "qwen/qwen3-vl-32b-instruct"):
         super().__init__(action_space_size=_QWEN3_VL_ACTION_SPACE_SIZE)
         self.model = model
         self.client = openai.OpenAI(
@@ -34,7 +34,7 @@ class Qwen3VLGrounder(Grounder):
     @retry(
        reraise=True,
        stop=stop_after_attempt(4),
-       wait=wait_exponential(multiplier=1.0, min=1.0, max=8.0),
+       wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
     )
     def _make_call(self, messages: list):
         response = self.client.chat.completions.create(

@@ -249,7 +249,7 @@ class CuaToolSet:
         if self.enable_terminal_command_tool:
             self.tools.append(_terminal_tool)
 
-    def parse_action(self, tool_call: dict, screenshot: str) -> Tuple[str, str, tuple[int, int]]:
+    def parse_action(self, tool_call: dict, screenshot: str) -> Tuple[str, str, tuple[int, int], bool]:
         name = tool_call.name
         args = json.loads(tool_call.arguments)
 
@@ -399,7 +399,7 @@ class CuaToolSet:
         else:
             raise ToolNotFoundError(f"Unknown tool call: {name}")
     
-        return tool_result, "\n".join(pyautogui_actions), usage
+        return tool_result, "\n".join(pyautogui_actions), usage, False
     
         
     @retry(

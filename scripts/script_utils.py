@@ -2,11 +2,15 @@ import json
 import os
 from pathlib import Path
 import shutil
+from loguru import logger
 
 EVALUATION_EXAMPLES = r"D:\Projects\OSWorld-MA\evaluation_examples\examples"
 RESULT_BASE_DIR = r"D:\Projects\OSWorld-MA\results\pyautogui\screenshot"
 
-def get_tasks(model: str):
+with open(r"D:\Projects\OSWorld-MA\evaluation_examples\test_nogdrive.json", "r") as f:
+    _ground_truth = json.load(f)
+
+def get_tasks(model: str, remove_corrupted: bool = False):
     _results_dir = os.path.join(RESULT_BASE_DIR, model)
     tasks = []
     for domain_dir in Path(_results_dir).iterdir():
@@ -19,6 +23,10 @@ def get_tasks(model: str):
             # read results.json from summary/results.json
             results_file = task_dir / "summary" / "results.json"
             if not results_file.exists():
+                if remove_corrupted:
+                    shutil.rmtree(task_dir)
+                    print(f"Removed corrupted task dir: {task_dir}")
+                    continue
                 raise ValueError(f"Results file not found in: {task_dir}")
             
             with open(results_file, "r") as f:
@@ -48,6 +56,18 @@ def get_tasks(model: str):
                 "trajectories": trajs,
             }
             tasks.append(task_eval)
+
+    for task in tasks:
+        if task["domain"] not in _ground_truth:
+            logger.warning(f"Warning: Domain {task['domain']} not found in ground truth.")
+            continue   
+        if task["task_id"] not in _ground_truth[task["domain"]]:
+            logger.warning(f"Warning: Task ID {task['task_id']} in domain {task['domain']} not found in ground truth.")
+            continue
+
+    count_gt_tasks = sum(len(_ground_truth[domain]) for domain in _ground_truth)
+    if len(tasks) < count_gt_tasks:
+        logger.warning(f"Warning: Only {len(tasks)} tasks found, but {count_gt_tasks} expected from ground truth.")
 
     return tasks
 

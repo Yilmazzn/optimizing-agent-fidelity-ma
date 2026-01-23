@@ -23,6 +23,7 @@ class Agent(abc.ABC):
         self.screen_size = screen_size
 
         self.history = []
+        self.step = 1
 
     def resize_screenshot(self, screenshot: str):
         """
@@ -102,8 +103,13 @@ class Agent(abc.ABC):
     def predict(self, screenshot: str, task, python_output: dict = None, terminal_output: dict = None) -> AgentPredictionResponse:
         pass
 
+    @abc.abstractmethod
+    def end_task(self):
+        pass
+
     def reset(self):
         self.history = []
+        self.step = 1
 
     def get_config(self):
         # Return a JSON-friendly snapshot of the agent's attributes.

@@ -19,4 +19,9 @@ def build_agent(agent_type: str, vm_http_server: str = None) -> Agent:
         if vm_http_server is None:
             raise ValueError("vm_http_server must be provided for custom-2 agent.")
         return Custom2Agent(vm_http_server=vm_http_server)
+    elif agent_type == "skill-agent":
+        from agents.hybrid.skill_agent.skill_agent import SkillAgent
+        if vm_http_server is None:
+            raise ValueError("vm_http_server must be provided for skill-agent.")
+        return SkillAgent(vm_http_server=vm_http_server)
     raise ValueError(f"Unknown agent type: {agent_type}")

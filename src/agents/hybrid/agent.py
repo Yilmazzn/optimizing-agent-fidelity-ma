@@ -9,7 +9,7 @@ from agents.hybrid.prompts import PLANNER_SYSTEM_PROMPT, PLANNER_SYSTEM_PROMPT_V
 from agents.hybrid.tools import CuaToolSet
 from agents.grounders.qwen3_vl import Qwen3VLGrounder
 from domain.request import AgentPredictionResponse, TokenUsage
-from utils import expect_env_var, fix_pyautogui_script
+from utils import expect_env_var, fix_pyautogui_script, get_tool_calls_from_response
 
 
 class Custom1Agent(Agent):
@@ -32,41 +32,37 @@ class Custom1Agent(Agent):
         )
         self.system_prompt = PLANNER_SYSTEM_PROMPT
 
+        # managing responses api state
+        self.last_tool_results = None
+        self.previous_response_id = None
+
     @retry(
        reraise=True,
        stop=stop_after_attempt(4),
        wait=wait_exponential(multiplier=1.0, min=1.0, max=8.0),
     )
-    def _generate_plan(self, task: str) -> Tuple[str, list]: 
-        instructions=None
-        user_query = "Execute the next action."
-        previous_response_id = None
-        tool_results = []
-
-        # include system prompt only on first step
-        if len(self.history) <= 1:
-            instructions = self.system_prompt
-            user_query = f"Complete the following task: '{task}'\n\n"
-        else:
-            previous_response_id =self.history[-2].get("response_id", None)
-            tool_results = self.history[-2].get("tool_results", None)
-
-        screenshot = self.history[-1]["screenshot"]
-
+    def _generate_plan(self, task: str = None, screenshot: str = None) -> Tuple[str, list]: 
+        # only pass task for very first request
+        user_query = f"Complete the following task: '{task}'\n\n" if task else "Execute the next action."
+        instructions = self.system_prompt if task else None
+        
         _input = []
 
-        if tool_results:
-            _input += tool_results
-
+        if task is None:
+            if self.last_tool_results is None or len(self.last_tool_results) == 0:
+                raise ValueError("No tool results from previous step to inform the planner.")
+            _input += self.last_tool_results
+        
+        user_content = []
+        if screenshot:
+            user_content.append({
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{screenshot}"
+            })
+        user_content.append({"type": "input_text", "text": user_query})
         _input.append({
             "role": "user",
-            "content": [
-                {
-                    "type": "input_image",
-                    "image_url": f"data:image/png;base64,{screenshot}"
-                },
-                {"type": "input_text", "text": user_query},
-            ]
+            "content": user_content
         })
 
         response = self.planner_client.responses.create(
@@ -78,33 +74,21 @@ class Custom1Agent(Agent):
                 "summary": "auto",
             },
             input=_input,
-            previous_response_id=previous_response_id,
+            previous_response_id=self.previous_response_id,
             tool_choice="required",
         )
-
-        self.history[-1]["response_id"] = response.id
-
+        self.previous_response_id = response.id
         return response
 
+    def end_task(self):
+        pass
 
-    def predict(self, screenshot: str, task) -> AgentPredictionResponse:
-        token_usage = TokenUsage(
-            prompt_tokens=0,
-            completion_tokens=0,
-        )
-        self.history.append({
-            "screenshot": screenshot,
-        })
+    def iterate(self, screenshot: str = None, task: str = None) -> tuple[AgentPredictionResponse, bool]:
+        response = self._generate_plan(task=task, screenshot=screenshot)
+        regenerate_plan = False
 
-        response = self._generate_plan(task)
+        token_usage = TokenUsage.from_response(response)
 
-        # calculate token usage
-        cached_input_tokens = response.usage.input_tokens_details.cached_tokens
-        token_usage.prompt_tokens += response.usage.input_tokens - cached_input_tokens
-        token_usage.completion_tokens += response.usage.output_tokens
-        token_usage.cached_prompt_tokens += cached_input_tokens
-
-        # reasoning summary
         reasoning_summaries = [] 
         for output in response.output:
             if output.type == "summary_text" or output.type == "reasoning":
@@ -115,17 +99,17 @@ class Custom1Agent(Agent):
         reasoning_summary = "\n\n".join(reasoning_summaries)
         logger.info(f"Reasoning Summary: {reasoning_summary}")
 
-        tool_calls = list(filter(lambda o: o.type == "function_call", response.output))
-
-        self.history[-1]["reasoning_summary"] = reasoning_summary
-        self.history[-1]["agent_output"] = response.output
-        self.history[-1]["tool_calls"] = tool_calls
-
+        tool_calls = get_tool_calls_from_response(response)
         executed_actions = []
         pyautogui_scripts = []
-        tool_results = []
+        self.last_tool_results = []
+
         for tool_call in tool_calls:
-            executed_action, pyautogui_script, _token_usage = self.tool_set.parse_action(tool_call, screenshot)
+            executed_action, pyautogui_script, _token_usage, _regenerate_plan = self.tool_set.parse_action(
+                tool_call=tool_call,
+                screenshot=screenshot,
+            )
+            regenerate_plan = _regenerate_plan or regenerate_plan
             
             token_usage.prompt_tokens += _token_usage[0]
             token_usage.completion_tokens += _token_usage[1]
@@ -133,13 +117,11 @@ class Custom1Agent(Agent):
             executed_actions.append(executed_action)
             pyautogui_scripts.append(pyautogui_script)
 
-            tool_results.append({
+            self.last_tool_results.append({
                 "type": "function_call_output",
                 "call_id": tool_call.call_id,
                 "output": executed_action,
             })
-
-        self.history[-1]["tool_results"] = tool_results
 
         pyautogui_script = "\n\n".join(pyautogui_scripts)
         pyautogui_script = fix_pyautogui_script(pyautogui_script)
@@ -148,18 +130,33 @@ class Custom1Agent(Agent):
         if response.output_text:
             agent_response += "\n\n#Output\n" + response.output_text
 
-        agent_response += "\n\n# Tool Calls\n\n"
+        agent_response += "\n\n# Tool Calls"
         for i, tc in enumerate(tool_calls):
             executed_action = executed_actions[i]
             tc_name, tc_args = tc.name, tc.arguments
-            agent_response += f"Called tool: {tc_name} with arguments: {json.dumps(tc_args)}\n"
-            agent_response += f"Result: {executed_action}\n\n"
+            agent_response += f"\n\n# Tool Call {i+1}:\n"
+            agent_response += f"Called tool: {tc_name}\n"
+            agent_response += f"## Arguments\n{json.dumps(tc_args, indent=2)}\n"
+            agent_response += f"## Result\n{executed_action}"
 
         return AgentPredictionResponse(
             pyautogui_actions=pyautogui_script,
             response=agent_response,
             usage=token_usage,
-        )
+        ), regenerate_plan
+
+    def predict(self, screenshot: str, task) -> AgentPredictionResponse:
+        task = task if self.step == 1 else None
+
+        agent_response, retrigger = self.iterate(screenshot=screenshot, task=task)
+        while retrigger:
+            logger.info("Regenerating plan based on tool call result.")
+            additional_response, retrigger = self.iterate(screenshot=None, task=None)
+
+            agent_response += additional_response
+
+        self.step += 1
+        return agent_response
     
 class Custom2Agent(Custom1Agent):
     """ same custom-1, however has coding tools (python/terminal)"""

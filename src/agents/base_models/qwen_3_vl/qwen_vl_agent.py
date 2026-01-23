@@ -113,6 +113,9 @@ class QwenAgent(Agent):
                 continue
             del self.history[i]["screenshot"]
 
+    def end_task(self):
+        pass
+
     def predict(self, screenshot: str, task: str) -> AgentPredictionResponse:
         self.history.append({
             "screenshot": screenshot,

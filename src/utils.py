@@ -2,8 +2,9 @@ import os
 import re
 
 from loguru import logger
-
-from domain.request import AgentPredictionResponse, AgentPredictionResponseLog, AgentPredictionResponseLog
+import openai
+from functools import lru_cache
+from domain.request import AgentPredictionResponseLog, AgentPredictionResponseLog
 
 VIEWPORT_SIZE = (1920, 1080)
 LOGS_DIR = "logs"
@@ -106,9 +107,19 @@ def convert_to_base64_image_url(b64_image: str) -> str:
     return f"data:image/png;base64,{b64_image}"
 
 def log_agent_response(agent_name: str, agent_response_log: AgentPredictionResponseLog, start_new: bool = False):
-    log_file_path = os.path.join(LOGS_DIR, agent_name, f"{agent_response_log.task_id,}.jsonl")
+    log_file_path = os.path.join(LOGS_DIR, agent_name, f"{agent_response_log.task_id}.jsonl")
     os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
 
     mode = "w" if start_new else "a"
     with open(log_file_path, mode, encoding="utf-8") as f:
         f.write(agent_response_log.model_dump_json() + "\n")
+
+@lru_cache(maxsize=1)
+def get_openai_client() -> openai.OpenAI:
+    return openai.OpenAI(
+        base_url=expect_env_var("AZURE_OPENAI_BASE_URL"),
+        api_key=expect_env_var("AZURE_OPENAI_API_KEY"),
+    )
+
+def get_tool_calls_from_response(response) -> list:
+    return list(filter(lambda o: o.type == "function_call", response.output))

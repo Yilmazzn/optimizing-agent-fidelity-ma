@@ -189,6 +189,9 @@ class BaseAnthropicAgent(Agent):
 
         return messages
 
+    def end_task(self):
+        pass
+
     def predict(self, screenshot: str, task: str) -> AgentPredictionResponse:
         user_query = None
         if len(self.history) == 0:
