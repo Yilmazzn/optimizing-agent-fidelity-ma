@@ -47,9 +47,14 @@ def include_routes(app: FastAPI):
             agent_type=init_request.agent,
             vm_http_server=init_request.vm_http_server,
         )
-        sessions[session_id] = {"agent": agent, "task": None, "predict_count": 0}
+        sessions[session_id] = {
+            "agent": agent,
+            "agent_type": init_request.agent,
+            "vm_http_server": init_request.vm_http_server,
+            "task": None,
+            "predict_count": 0
+        }
         logger.info(f"Initialized agent: '{agent.name}' for session: '{session_id}'")
-        agent.reset()
         # return agent.get_config()
 
     @app.post("/task", status_code=200)
@@ -59,11 +64,18 @@ def include_routes(app: FastAPI):
 
     @app.post("/reset", status_code=200)
     def reset(session: dict = Depends(get_session)):
-        agent = session.get("agent")
-        if agent is None:
+        agent_type = session.get("agent_type")
+        vm_http_server = session.get("vm_http_server")
+        if agent_type is None:
             raise HTTPException(status_code=500, detail="Agent not initialized.")
-        logger.info(f"Reset agent: '{agent}'")
-        agent.reset()
+        
+        # Create a new agent instance instead of calling reset()
+        new_agent = build_agent(
+            agent_type=agent_type,
+            vm_http_server=vm_http_server,
+        )
+        logger.info(f"Reset agent: '{new_agent.name}' (reinitialized)")
+        session["agent"] = new_agent
         session["task"] = None
         session["predict_count"] = 0
 
@@ -86,6 +98,7 @@ def include_routes(app: FastAPI):
         )
         log_agent_response(agent_name=agent.name, agent_response_log=agent_response_log, start_new=(session["predict_count"] == 1))
 
+        result.time_thinking = duration
         return result
 
     @app.post("/end_task", status_code=200)

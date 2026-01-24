@@ -35,6 +35,11 @@ class Custom1Agent(Agent):
         # managing responses api state
         self.last_tool_results = None
         self.previous_response_id = None
+    
+    def reset(self):
+        super().reset()
+        self.last_tool_results = None
+        self.previous_response_id = None
 
     @retry(
        reraise=True,
@@ -43,7 +48,7 @@ class Custom1Agent(Agent):
     )
     def _generate_plan(self, task: str = None, screenshot: str = None) -> Tuple[str, list]: 
         # only pass task for very first request
-        user_query = f"Complete the following task: '{task}'\n\n" if task else "Execute the next action."
+        user_query = f"Complete the following task: '{task}'\n\n" if task else "Execute the next action or finish."
         instructions = self.system_prompt if task else None
         
         _input = []

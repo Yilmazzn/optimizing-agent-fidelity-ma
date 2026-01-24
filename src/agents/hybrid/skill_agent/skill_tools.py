@@ -1,7 +1,9 @@
+import copy
 from datetime import datetime
 import json
 import os
 from pathlib import Path
+import shutil
 from pydantic import BaseModel, Field
 
 from tenacity import stop_after_attempt
@@ -16,6 +18,7 @@ from utils import get_openai_client, get_tool_calls_from_response
 
 
 _SKILLS_FOLDER = Path(__file__).parent / ".skills"
+_ARCHIVE_FOLDER = Path(__file__).parent / ".archived_skills"
 _DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 os.makedirs(_SKILLS_FOLDER, exist_ok=True)
@@ -82,10 +85,15 @@ _deprecate_skill_tool = {
 class SkillDoesNotExistError(Exception):
     pass
 
-class SkillMeta(BaseModel):
-    name: str
-    description: str
+class SkillsArchiveInfo(BaseModel):
+    timestamp: datetime = Field(default_factory=datetime.now)
+    token_usage: TokenUsage
+    agent_output: str
 
+class SkillMeta(BaseModel):
+    name: str           
+    description: str
+    
     def __str__(self):
         return f"- {self.name}: {self.description}"
 
@@ -95,7 +103,7 @@ class Skill(SkillMeta):
 
     @classmethod
     def from_file(cls, filepath: str) -> "Skill":
-        with open(filepath, "r") as f:
+        with open(filepath, "r", encoding="utf-8") as f:
             file_content = f.read()
 
         parts = file_content.split('---')
@@ -112,7 +120,7 @@ class Skill(SkillMeta):
         filepath = f"{_SKILLS_FOLDER}/{self.name}.md"
         self.last_updated = datetime.now().strftime(_DATETIME_FORMAT)
 
-        yaml_str = yaml.dump(self.model_dump(exclude={"content"}), default_flow_style=False)
+        yaml_str = yaml.dump(self.model_dump(exclude={"content"}), default_flow_style=False, allow_unicode=True)
 
         with open(filepath, "w", encoding="utf-8") as f:
             f.write('---\n')
@@ -132,11 +140,9 @@ class SkillManager:
 
     def __init__(self):
         self.client = get_openai_client()
-        self.previous_response_id = None
 
         skill_catalog = "\n".join([str(skill) for skill in self.get_available_skills()])
         self.system_prompt = _SKILLS_MANAGER_PROMPT.format(skill_catalog=skill_catalog)
-        self.last_tool_results = None
 
     def _get_skill(self, name: str) -> Skill:
         skill_file = _SKILLS_FOLDER / f"{name}.md"
@@ -154,6 +160,19 @@ class SkillManager:
             skills.append(SkillMeta(name=skill.name, description=skill.description))
         
         return skills
+    
+    def archive_skill_catalog(self, token_usage: TokenUsage, agent_output: str) -> str:
+        archive_name = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_path = _ARCHIVE_FOLDER / archive_name 
+        _ARCHIVE_FOLDER.mkdir(parents=True, exist_ok=True)
+
+        shutil.copytree(_SKILLS_FOLDER, archive_path)
+        with open(archive_path / "archive_info.json", "w", encoding="utf-8") as f:
+            data_obj = SkillsArchiveInfo(
+                token_usage=token_usage,
+                agent_output=agent_output
+            )
+            f.write(data_obj.model_dump_json(indent=4))
     
     def _update_skill(self, name: str, description: str = None, content: str = None):
         skill = self._get_skill(name)
@@ -181,10 +200,10 @@ class SkillManager:
         reraise=True,
         stop=stop_after_attempt(3),
     )
-    def _make_call(self, user_query: str):
+    def _make_call(self, user_query: str, tool_results: list = None, previous_response_id: str = None):
         _input = []
-        if self.last_tool_results:
-            _input += self.last_tool_results
+        if tool_results:
+            _input += tool_results
         _input += [{
             "role": "user",
             "content": [{
@@ -196,7 +215,7 @@ class SkillManager:
         response = self.client.responses.create(
             model="gpt-5.2",
             instructions=self.system_prompt,
-            previous_response_id=self.previous_response_id,
+            previous_response_id=previous_response_id,
             input=_input,
             reasoning={"effort": "high"},
             tools=[
@@ -205,7 +224,6 @@ class SkillManager:
                 _deprecate_skill_tool
             ]
         )
-        self.previous_response_id = response.id
         return response
     
     def _handle_tool_call(self, tool_call) -> dict:
@@ -221,42 +239,50 @@ class SkillManager:
             raise ValueError(f"Skill name is required for {name} tool. Received args: {args}")
 
         if name == "read-skill":
-            tool_result = self.read_skill_content(skill_name)
+            try: 
+                tool_result = self._get_skill(skill_name).content
+            except SkillDoesNotExistError:
+                tool_result = f"Error: Skill '{skill_name}' does not exist. Available skills are: " + ", ".join([skill.name for skill in self.get_available_skills()])
         elif name == "write-skill":
             try: 
                 skill = self._get_skill(skill_name)
-                skill.update(description=description, content=content)
-            except SkillDoesNotExistError:
                 if not description or not content:
-                    raise ValueError(f"Description and content are required to create a new skill '{skill_name}'.")
+                    tool_result = f"Description and content are required to create a new skill '{skill_name}'."
+                skill.update(description=description, content=content)
                 self.add_skill(name=skill_name, description=description, content=content)
-            tool_result = f"Skill '{skill_name}' has been created successfully."
+                tool_result = f"Skill '{skill_name}' has been created successfully."
+            except SkillDoesNotExistError:
+                tool_result = f"Error: Skill '{skill_name}' does not exist. Available skills are: " + ", ".join([skill.name for skill in self.get_available_skills()])
         elif name == "deprecate-skill":
-            self.deprecate_skill(skill_name)
-            tool_result = f"Skill '{skill_name}' has been deprecated successfully."
-
+            try:
+                self.deprecate_skill(skill_name)
+                tool_result = f"Skill '{skill_name}' has been deprecated successfully."
+            except FileNotFoundError:
+                tool_result = f"Error: Skill '{skill_name}' does not exist. Available skills are: " + ", ".join([skill.name for skill in self.get_available_skills()])
         return {
             "type": "function_call_output",
             "call_id": tool_call.call_id,
             "output": tool_result,
         }
     
-    def learn_from_reflection(self, reflection: str) -> TokenUsage:
+    def learn_from_reflection(self, reflection: str) -> tuple[TokenUsage, str]:
         token_usage = TokenUsage(prompt_tokens=0, completion_tokens=0, cached_prompt_tokens=0)
 
+        tool_results = []
+        previous_response_id = None
         while True:
-            response = self._make_call(reflection)
+            response = self._make_call(reflection, tool_results, previous_response_id)
             token_usage += TokenUsage.from_response(response)
             tool_calls = get_tool_calls_from_response(response)
 
             tool_results = [self._handle_tool_call(tool_call) for tool_call in tool_calls]
-            self.last_tool_results = tool_results
-            
+            previous_response_id = response.id
+
             # terminate if agent stopped making tool calls
             if len(tool_calls) == 0:
                 break
 
-        return token_usage  
+        return token_usage, response.output_text
 
     
 class SkillsToolSet(CuaToolSet):
@@ -268,7 +294,7 @@ class SkillsToolSet(CuaToolSet):
             enable_terminal_command_tool=True,
         )
         self.skill_manager = SkillManager()
-        self.tools.extend(self._get_tools())
+        self.tools.extend(self.get_tools())
 
     def list_skills(self) -> list[SkillMeta]:
         return self.skill_manager.get_available_skills()
@@ -297,20 +323,15 @@ class SkillsToolSet(CuaToolSet):
         
         return tool_result, "", (0, 0), True
 
-    def _get_tools(self):
-        return [{
-            "type": "function",
-            "name": "read-skill",
-            "description": "Reads the content of a specified skill.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "skill_name": {
-                        "type": "string",
-                        "description": "The name of the skill to be read."
-                    }
-                },
-                "required": ["skill_name"],
-                "additionalProperties": False
-            }
-        }]
+    def get_tools(self, editing_mode: bool = False) -> list[dict]:
+        _tools = []
+
+        if editing_mode:
+            return [_read_skill_tool, _write_skill_tool, _deprecate_skill_tool]
+        
+        # inject skill names to force via structured generation and enum
+        available_skill_names = [skill.name for skill in self.skill_manager.get_available_skills()]
+        fixed_read_skill_tool = copy.deepcopy(_read_skill_tool)
+        fixed_read_skill_tool["parameters"]["properties"]["name"]["enum"] = available_skill_names
+        
+        return [_read_skill_tool]

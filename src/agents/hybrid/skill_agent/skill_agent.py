@@ -13,8 +13,9 @@ The assistant should use its own judgment to decide whether a Skill could improv
 
 When a Skill seems relevant, the assistant should consult it via the `read-skill` tool and incorporate its guidance as appropriate. Skill content should inform the response, not replace general reasoning unless clearly beneficial.
 
-If no Skill meaningfully adds value, proceed using general knowledge alone.  
-Skills and tool usage should remain internal unless explicitly requested.
+* If no Skill meaningfully adds value, proceed using general knowledge alone.  
+* Skills and tool usage should remain internal unless explicitly requested.
+* Call multiple skills if needed to complete (in parallel separate tool calls)
 
 ## Available Skills:
 {skills_list}
@@ -67,4 +68,5 @@ class SkillAgent(Custom2Agent):
     def end_task(self):
         reflection = self._learn_from_episode()
         logger.info(f"Reflector learned from episode: \n{reflection}")
-        self.skill_manager.learn_from_reflection(reflection)
+        token_usage, agent_output = self.skill_manager.learn_from_reflection(reflection)
+        self.skill_manager.archive_skill_catalog(token_usage, agent_output)

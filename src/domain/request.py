@@ -30,12 +30,23 @@ class TokenUsage(BaseModel):
             completion_tokens=response.usage.output_tokens,
             cached_prompt_tokens=cached_input_tokens,
         )
+    
+    @property
+    def cache_rate(self) -> float:
+        total_input = self.prompt_tokens + self.cached_prompt_tokens
+        if total_input == 0:
+            return 0.0
+        return self.cached_prompt_tokens / total_input
+
+    def __str__(self) -> str:
+        return f"Input Tokens: {self.prompt_tokens} (cached: {self.cached_prompt_tokens} -- {self.cache_rate:.2%}), Output Tokens: {self.completion_tokens}"
 
 class AgentPredictionResponse(BaseModel):
     response: str
     pyautogui_actions: Optional[str]
     usage: TokenUsage
     status: str = "working" # or "done", "infeasible", "error"
+    time_thinking: float = 0.0 # seconds
 
     def __add__(self, other: "AgentPredictionResponse") -> "AgentPredictionResponse":
         return AgentPredictionResponse(
@@ -43,6 +54,7 @@ class AgentPredictionResponse(BaseModel):
             pyautogui_actions=self.pyautogui_actions + "\n\n# ========\n\n" + other.pyautogui_actions,
             usage=self.usage + other.usage,
             status=other.status,
+            time_thinking=self.time_thinking + other.time_thinking,
         )
 
 class AgentPredictionResponseLog(AgentPredictionResponse):
