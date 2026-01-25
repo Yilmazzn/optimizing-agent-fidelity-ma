@@ -89,19 +89,19 @@ def include_routes(app: FastAPI):
 
         result.pyautogui_actions = fix_pyautogui_script(result.pyautogui_actions) 
 
-        agent_response_log = AgentPredictionResponseLog(
-            **result.model_dump(),
-            duration=duration,
-            task_id=prediction_request.task_id,
-            task=task,
-            domain=prediction_request.domain,
-        )
-        log_agent_response(agent_name=agent.name, agent_response_log=agent_response_log, start_new=(session["predict_count"] == 1))
+        # agent_response_log = AgentPredictionResponseLog(
+        #     **result.model_dump(),
+        #     duration=duration,
+        #     task_id=prediction_request.task_id,
+        #     task=task,
+        #     domain=prediction_request.domain,
+        # )
+        # log_agent_response(agent_name=agent.name, agent_response_log=agent_response_log, start_new=(session["predict_count"] == 1))
 
         result.time_thinking = duration
         return result
 
     @app.post("/end_task", status_code=200)
-    def end_task(session: dict = Depends(get_session)):
+    def end_task(task_id: str = Query(None, description="Task identifier"), session: dict = Depends(get_session)):
         agent = session.get("agent")
-        agent.end_task()
+        agent.end_task(task_id=task_id)

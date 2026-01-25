@@ -31,15 +31,18 @@ class Custom1Agent(Agent):
             grounder=Qwen3VLGrounder(model=self.grounding_model),
         )
         self.system_prompt = PLANNER_SYSTEM_PROMPT
+        self.reasoning_effort = "high"
 
         # managing responses api state
         self.last_tool_results = None
         self.previous_response_id = None
+        self.last_screenshot = None
     
     def reset(self):
         super().reset()
         self.last_tool_results = None
         self.previous_response_id = None
+        self.last_screenshot = None
 
     @retry(
        reraise=True,
@@ -48,7 +51,7 @@ class Custom1Agent(Agent):
     )
     def _generate_plan(self, task: str = None, screenshot: str = None) -> Tuple[str, list]: 
         # only pass task for very first request
-        user_query = f"Complete the following task: '{task}'\n\n" if task else "Execute the next action or finish."
+        user_query = f"Complete the following task: '{task}'\n\n" if task else "Execute the next action (or finish if done/fail/infeasible)."
         instructions = self.system_prompt if task else None
         
         _input = []
@@ -75,7 +78,7 @@ class Custom1Agent(Agent):
             instructions=instructions,
             tools=self.tool_set.tools,
             reasoning={
-                "effort": "high",
+                "effort": self.reasoning_effort,
                 "summary": "auto",
             },
             input=_input,
@@ -85,7 +88,7 @@ class Custom1Agent(Agent):
         self.previous_response_id = response.id
         return response
 
-    def end_task(self):
+    def end_task(self, task_id: str = None):
         pass
 
     def iterate(self, screenshot: str = None, task: str = None) -> tuple[AgentPredictionResponse, bool]:
@@ -112,7 +115,7 @@ class Custom1Agent(Agent):
         for tool_call in tool_calls:
             executed_action, pyautogui_script, _token_usage, _regenerate_plan = self.tool_set.parse_action(
                 tool_call=tool_call,
-                screenshot=screenshot,
+                screenshot=self.last_screenshot,
             )
             regenerate_plan = _regenerate_plan or regenerate_plan
             
@@ -128,7 +131,7 @@ class Custom1Agent(Agent):
                 "output": executed_action,
             })
 
-        pyautogui_script = "\n\n".join(pyautogui_scripts)
+        pyautogui_script = "\n\ntime.sleep(1)\n\n".join(pyautogui_scripts)
         pyautogui_script = fix_pyautogui_script(pyautogui_script)
 
         agent_response = reasoning_summary
@@ -142,7 +145,7 @@ class Custom1Agent(Agent):
             agent_response += f"\n\n# Tool Call {i+1}:\n"
             agent_response += f"Called tool: {tc_name}\n"
             agent_response += f"## Arguments\n{json.dumps(tc_args, indent=2)}\n"
-            agent_response += f"## Result\n{executed_action}"
+            agent_response += f"## Result\n{executed_action[:100]}"
 
         return AgentPredictionResponse(
             pyautogui_actions=pyautogui_script,
@@ -152,7 +155,8 @@ class Custom1Agent(Agent):
 
     def predict(self, screenshot: str, task) -> AgentPredictionResponse:
         task = task if self.step == 1 else None
-
+        
+        self.last_screenshot = screenshot
         agent_response, retrigger = self.iterate(screenshot=screenshot, task=task)
         while retrigger:
             logger.info("Regenerating plan based on tool call result.")
@@ -171,3 +175,9 @@ class Custom2Agent(Custom1Agent):
         self.grounder = Qwen3VLGrounder(model="qwen/qwen3-vl-32b-instruct")
         self.tool_set = CuaToolSet(grounder=self.grounder, enable_python_execution_tool=True, enable_terminal_command_tool=True, http_server=vm_http_server)
     
+class Custom3Agent(Custom2Agent):
+    """ same custom-2, with 'low-level' reasoning """
+
+    def __init__(self, vm_http_server: str, name: str = "custom-3"):
+        super().__init__(name=name, vm_http_server=vm_http_server)
+        self.reasoning_effort = "low"

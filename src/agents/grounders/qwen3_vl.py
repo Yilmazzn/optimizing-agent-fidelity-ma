@@ -13,9 +13,10 @@ The screen's resolution is 1000x1000
 You may think step by step to locate the element.
 
 # Rules
-- The response must include a pixel coordinate
+- The response MUST include a pixel coordinate
 - Do not output more than one coordinate
 - Make sure to locate any buttons, links, icons, etc with the cursor tip in the center of the element. Don't provide coordinates to boxes on their edges unless asked.
+
 
 # Example
 User Query: 'Locate the "Submit" button on the screen.'

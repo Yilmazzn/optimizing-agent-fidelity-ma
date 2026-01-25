@@ -104,7 +104,7 @@ class Agent(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def end_task(self):
+    def end_task(self, task_id: str = None):
         pass
 
     def reset(self):

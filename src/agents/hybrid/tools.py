@@ -186,17 +186,13 @@ _python_tool = {
 _terminal_tool =  {
     "type": "function",
     "name": "execute_terminal_command",
-    "description": "Executes a temporary terminal command on the system and returns the command output or any errors encountered during execution.",
+    "description": "Executes a temporary non-stateful terminal command on the system and returns the command output or any errors encountered during execution.",
     "parameters": {
         "type": "object",
         "properties": {
             "command": {
                 "type": "string",
                 "description": "The terminal command to be executed."
-            },
-            "working_dir": {
-                "type": "string",
-                "description": "The working directory in which to execute the command. If not specified, uses the default working dir."
             }
         },
         "required": ["command"],
@@ -389,11 +385,10 @@ class CuaToolSet:
 
         elif self.enable_terminal_command_tool and name == "execute_terminal_command":
             command = args.get("command")
-            working_dir = args.get("working_dir")
             if command is None:
                 raise ValueError(f"execute_terminal_command requires 'command' argument. Got arguments {args}")
             
-            result = self._execute_terminal_command(command=command, working_dir=working_dir)
+            result = self._execute_terminal_command(command=command)
             tool_result = json.dumps(result, indent=2)
 
         else:
@@ -431,11 +426,10 @@ class CuaToolSet:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1.0, min=1.0, max=8.0)
     )
-    def _execute_terminal_command(self, command: str, working_dir: str = None, timeout: int = 300) -> dict:
+    def _execute_terminal_command(self, command: str, timeout: int = 300) -> dict:
         payload = json.dumps({
             "script": command,
-            "timeout": timeout,
-            "working_dir": working_dir
+            "timeout": timeout
         })
         try:
             response = requests.post(

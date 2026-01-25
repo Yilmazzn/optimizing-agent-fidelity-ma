@@ -24,4 +24,14 @@ def build_agent(agent_type: str, vm_http_server: str = None) -> Agent:
         if vm_http_server is None:
             raise ValueError("vm_http_server must be provided for skill-agent.")
         return SkillAgent(vm_http_server=vm_http_server)
+    elif agent_type == "custom-3":
+        from agents.hybrid.agent import Custom3Agent
+        if vm_http_server is None:
+            raise ValueError("vm_http_server must be provided for custom-3 agent.")
+        return Custom3Agent(vm_http_server=vm_http_server)
+    elif agent_type == "async-agent":
+        from agents.hybrid.async_agent import AsyncCustomAgent
+        if vm_http_server is None:
+            raise ValueError("vm_http_server must be provided for async-agent.")
+        return AsyncCustomAgent(vm_http_server=vm_http_server)
     raise ValueError(f"Unknown agent type: {agent_type}")

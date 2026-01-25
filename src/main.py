@@ -1,6 +1,8 @@
 import sys
 from loguru import logger
 
+from agents.hybrid.skill_agent.models.skill_catalog_manager import SkillCatalogManager
+
 # Configure loguru to include timestamps (must be done before other imports)
 logger.remove()
 logger.add(sys.stderr, format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}")
@@ -34,11 +36,22 @@ if __name__ == "__main__":
     PORT = int(os.getenv("PORT", "9876"))
     
     uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=not DISABLE_RELOAD)
+    
+    # manager = SkillCatalogManager()
+    # manager.create_new_catalog(name="default", description="Default skill catalog", skill_title="Initial Skill", trigger="This is the initial skill in the default catalog.", content="Use this skill as an example.")
+    # manager.create_new_skill(
+    #     catalog_name="default",
+    #     title="Test Skill",
+    #     trigger="This is a test skill.",
+    #     content="Use this skill to test the skill catalog manager.",
+    # )
+    
+    # manager.save()
 
     # import base64
     # from agents.agent_factory import build_agent
 
-    # agent = build_agent("skill-agent", vm_http_server="http://192.168.152.134:5000")
+    # agent = build_agent("async-agent", vm_http_server="http://192.168.152.134:5000")
 
     # img_filepath = r"D:\Projects\OSWorld-MA\results\pyautogui\screenshot\ui-tars-1.5-7b\libreoffice_calc\1d17d234-e39d-4ed7-b46f-4417922a4e7c\step_1_20251220@143713728414.png"
     # with open(img_filepath, "rb") as f:
@@ -51,7 +64,7 @@ if __name__ == "__main__":
 
     # agent.predict(
     #     screenshot=b64_screenshot, 
-    #     task="I want you to write 'Hello World' in B12",
+    #     task="Select A1:B12 using the cell input box top left.",
     # )
 
     # agent.predict(
