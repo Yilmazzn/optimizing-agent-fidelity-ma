@@ -466,3 +466,171 @@ class CuaToolSet:
             raise e
 
 
+class CuaToolSetNativeLocalization(CuaToolSet):
+    """ Toolset that accepts direct screen coordinates instead of element descriptions """
+
+    # Tools that accept coordinates directly instead of element descriptions
+    _coordinate_mouse_click = {
+        "type": "function",
+        "name": "mouse_click",
+        "description": "Clicks the mouse at specified screen coordinates.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "x": {
+                    "type": "integer",
+                    "description": "The x-coordinate (horizontal position) on the screen."
+                },
+                "y": {
+                    "type": "integer",
+                    "description": "The y-coordinate (vertical position) on the screen."
+                },
+                "mouse_button": {
+                    "type": "string",
+                    "enum": ["left", "right"],
+                    "default": "left",
+                    "description": "Which mouse button to click. Defaults to 'left'. If 'right' is specified, only a single click is permitted."
+                },
+                "click_type": {
+                    "type": "string",
+                    "enum": ["single", "double", "triple"],
+                    "default": "single",
+                    "description": "Type of clicks to perform. Defaults to 'single'. Values greater than 'single' are only valid when button is 'left'."
+                }
+            },
+            "required": ["x", "y"],
+            "additionalProperties": False
+        }
+    }
+
+    _coordinate_move_cursor = {
+        "type": "function",
+        "name": "move_cursor_to_element",
+        "description": "Moves/Hovers the cursor to specified screen coordinates.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "x": {
+                    "type": "integer",
+                    "description": "The x-coordinate (horizontal position) on the screen."
+                },
+                "y": {
+                    "type": "integer",
+                    "description": "The y-coordinate (vertical position) on the screen."
+                }
+            },
+            "required": ["x", "y"],
+            "additionalProperties": False
+        }
+    }
+
+    _coordinate_left_click_drag = {
+        "type": "function",
+        "name": "left_click_drag",
+        "description": "Performs a left-click drag from one screen position to another.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "start_x": {
+                    "type": "integer",
+                    "description": "The x-coordinate of the starting position."
+                },
+                "start_y": {
+                    "type": "integer",
+                    "description": "The y-coordinate of the starting position."
+                },
+                "end_x": {
+                    "type": "integer",
+                    "description": "The x-coordinate of the ending position."
+                },
+                "end_y": {
+                    "type": "integer",
+                    "description": "The y-coordinate of the ending position."
+                }
+            },
+            "required": ["start_x", "start_y", "end_x", "end_y"],
+            "additionalProperties": False
+        }
+    }
+
+    def __init__(self, 
+                 grounder: Grounder = None, 
+                 http_server: str = None, 
+                 enable_python_execution_tool: bool = False,
+                 enable_terminal_command_tool: bool = False
+        ):
+        # Don't call super().__init__ to avoid requiring grounder
+        self.http_server = http_server
+        self.enable_python_execution_tool = enable_python_execution_tool
+        self.enable_terminal_command_tool = enable_terminal_command_tool
+        self.grounder = grounder  # Optional, not used in this class
+
+        if self.enable_python_execution_tool or self.enable_terminal_command_tool:
+            if not self.http_server:
+                raise ValueError("http_server must be provided when coding tools are enabled.")
+
+        # Build tools list, replacing grounder-based tools with coordinate-based ones
+        self.tools = []
+        for tool in _computer_use_tools:
+            if tool["name"] == "mouse_click":
+                self.tools.append(self._coordinate_mouse_click)
+            elif tool["name"] == "move_cursor_to_element":
+                self.tools.append(self._coordinate_move_cursor)
+            elif tool["name"] == "left_click_drag":
+                self.tools.append(self._coordinate_left_click_drag)
+            else:
+                self.tools.append(tool)
+
+        if self.enable_python_execution_tool:
+            self.tools.append(_python_tool)
+        if self.enable_terminal_command_tool:
+            self.tools.append(_terminal_tool)
+
+    def parse_action(self, tool_call: dict, screenshot: str) -> Tuple[str, str, tuple[int, int], bool]:
+        name = tool_call.name
+        args = json.loads(tool_call.arguments)
+
+        # Only handle coordinate-based tools, delegate everything else to parent
+        if name not in ("mouse_click", "move_cursor_to_element", "left_click_drag"):
+            return super().parse_action(tool_call, screenshot)
+
+        tool_result = ""
+        pyautogui_actions = []
+        usage = (0, 0)  # No grounder usage
+
+        if name == "mouse_click":
+            x, y = args.get("x"), args.get("y")
+            if x is None or y is None:
+                raise ValueError(f"mouse_click requires 'x' and 'y' arguments. Got arguments {args}")
+            mouse_button = args.get("mouse_button", "left")
+            click_type = args.get("click_type", "single")
+            if mouse_button not in ["left", "right"]:
+                raise ValueError(f"mouse_button must be 'left' or 'right'. Got: {mouse_button}")
+            if click_type not in ["single", "double", "triple"]:
+                raise ValueError(f"click_type must be 'single', 'double', or 'triple'. Got: {click_type}")
+            
+            clicks = {"single": 1, "double": 2, "triple": 3}.get(click_type, 1)
+            pyautogui_actions.append(f"pyautogui.click({x}, {y}, clicks={clicks}, button='{mouse_button}', interval=0.1)")
+            tool_result = f"{click_type} clicked {mouse_button} button at ({x}, {y})."
+
+        elif name == "move_cursor_to_element":
+            x, y = args.get("x"), args.get("y")
+            if x is None or y is None:
+                raise ValueError(f"move_cursor_to_element requires 'x' and 'y' arguments. Got arguments {args}")
+            
+            pyautogui_actions.append(f"pyautogui.moveTo({x}, {y}, duration=0.2)")
+            tool_result = f"Moved cursor to ({x}, {y})."
+
+        elif name == "left_click_drag":
+            start_x, start_y = args.get("start_x"), args.get("start_y")
+            end_x, end_y = args.get("end_x"), args.get("end_y")
+            if None in (start_x, start_y, end_x, end_y):
+                raise ValueError(f"left_click_drag requires 'start_x', 'start_y', 'end_x', 'end_y'. Got arguments {args}")
+            
+            pyautogui_actions.append(f"pyautogui.moveTo({start_x}, {start_y}, duration=0.2)")
+            pyautogui_actions.append("pyautogui.mouseDown(button='left')")
+            pyautogui_actions.append(f"pyautogui.moveTo({end_x}, {end_y}, duration=0.5)")
+            pyautogui_actions.append("pyautogui.mouseUp(button='left')")
+            tool_result = f"Dragged left click from ({start_x}, {start_y}) to ({end_x}, {end_y})."
+
+        return tool_result, "\n".join(pyautogui_actions), usage, False

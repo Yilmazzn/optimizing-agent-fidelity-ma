@@ -6,7 +6,7 @@ import openai
 from tenacity import retry, stop_after_attempt, wait_exponential
 from agents.agent import Agent
 from agents.hybrid.prompts import PLANNER_SYSTEM_PROMPT, PLANNER_SYSTEM_PROMPT_V2
-from agents.hybrid.tools import CuaToolSet
+from agents.hybrid.tools import CuaToolSet, CuaToolSetNativeLocalization
 from agents.grounders.qwen3_vl import Qwen3VLGrounder
 from domain.request import AgentPredictionResponse, TokenUsage
 from utils import expect_env_var, fix_pyautogui_script, get_tool_calls_from_response
@@ -19,8 +19,8 @@ class Custom1Agent(Agent):
     Follows https://arxiv.org/pdf/2505.13227
     """
 
-    def __init__(self, name: str = "custom-1"):
-        super().__init__(name=name)
+    def __init__(self, name: str = "custom-1", max_images_in_history: int = None):
+        super().__init__(name=name, max_images_in_history=max_images_in_history)
 
         self.grounding_model = "Qwen/Qwen3-VL-32B-Instruct"
         self.planner_client = openai.OpenAI(
@@ -32,9 +32,11 @@ class Custom1Agent(Agent):
         )
         self.system_prompt = PLANNER_SYSTEM_PROMPT
         self.reasoning_effort = "high"
+        self.max_images_in_history = max_images_in_history
+        self.history = []
 
         # managing responses api state
-        self.last_tool_results = None
+        self.last_tool_results = []
         self.previous_response_id = None
         self.last_screenshot = None
     
@@ -43,56 +45,86 @@ class Custom1Agent(Agent):
         self.last_tool_results = None
         self.previous_response_id = None
         self.last_screenshot = None
+        self.history = []
+
+    def _remove_screenshots_from_history(self):
+        """
+        Remove old screenshots from history, keeping only the newest self.max_images_in_history screenshots.
+        """
+        # Collect all screenshot entries with their indices
+        screenshot_indices = []
+        for i, message in enumerate(self.history):
+            if isinstance(message, dict) and "content" in message:
+                content = message["content"]
+                if isinstance(content, list):
+                    for j, item in enumerate(content):
+                        if isinstance(item, dict) and item.get("type") == "input_image":
+                            screenshot_indices.append((i, j))
+        
+        # If we have more screenshots than the limit, remove the oldest ones
+        if len(screenshot_indices) > self.max_images_in_history:
+            num_to_remove = len(screenshot_indices) - self.max_images_in_history
+            indices_to_remove = screenshot_indices[:num_to_remove]
+            
+            # Remove screenshots in reverse order to maintain correct indices
+            for msg_idx, content_idx in reversed(indices_to_remove):
+                del self.history[msg_idx]["content"][content_idx]
+                
+                # If the content array is now empty and only had the image, remove the entire message
+                # unless it's the system message or has other content
+                if len(self.history[msg_idx]["content"]) == 0 and msg_idx > 0:
+                    del self.history[msg_idx]
 
     @retry(
        reraise=True,
        stop=stop_after_attempt(4),
        wait=wait_exponential(multiplier=1.0, min=1.0, max=8.0),
     )
-    def _generate_plan(self, task: str = None, screenshot: str = None) -> Tuple[str, list]: 
-        # only pass task for very first request
-        user_query = f"Complete the following task: '{task}'\n\n" if task else "Execute the next action (or finish if done/fail/infeasible)."
-        instructions = self.system_prompt if task else None
-        
-        _input = []
-
-        if task is None:
-            if self.last_tool_results is None or len(self.last_tool_results) == 0:
-                raise ValueError("No tool results from previous step to inform the planner.")
-            _input += self.last_tool_results
-        
-        user_content = []
-        if screenshot:
-            user_content.append({
-                "type": "input_image",
-                "image_url": f"data:image/png;base64,{screenshot}"
-            })
-        user_content.append({"type": "input_text", "text": user_query})
-        _input.append({
-            "role": "user",
-            "content": user_content
-        })
+    def _generate_plan(self) -> Tuple[str, list]:
 
         response = self.planner_client.responses.create(
             model="gpt-5.2",
-            instructions=instructions,
+            # instructions=instructions,
             tools=self.tool_set.tools,
             reasoning={
                 "effort": self.reasoning_effort,
                 "summary": "auto",
             },
-            input=_input,
-            previous_response_id=self.previous_response_id,
+            input=self.history,
+            # previous_response_id=self.previous_response_id,
             tool_choice="required",
         )
-        self.previous_response_id = response.id
+
+        # self.previous_response_id = response.id
         return response
 
     def end_task(self, task_id: str = None):
         pass
 
     def iterate(self, screenshot: str = None, task: str = None) -> tuple[AgentPredictionResponse, bool]:
-        response = self._generate_plan(task=task, screenshot=screenshot)
+        # prepare user input
+        user_content = []
+        # === Screenshot
+        if screenshot:
+            user_content.append({
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{screenshot}"
+            })
+        # === User Query
+        user_content.append({
+            "type": "input_text", 
+            "text": f"Complete the following task: '{task}'" if task else "Execute the next action (or finish if done/fail/infeasible)."
+        })
+        self.history.append({
+            "role": "user",
+            "content": user_content
+        })
+
+        if self.max_images_in_history is not None:
+            self._remove_screenshots_from_history()
+
+        response = self._generate_plan()
+        self.history += response.output
         regenerate_plan = False
 
         token_usage = TokenUsage.from_response(response)
@@ -125,7 +157,7 @@ class Custom1Agent(Agent):
             executed_actions.append(executed_action)
             pyautogui_scripts.append(pyautogui_script)
 
-            self.last_tool_results.append({
+            self.history.append({
                 "type": "function_call_output",
                 "call_id": tool_call.call_id,
                 "output": executed_action,
@@ -155,6 +187,15 @@ class Custom1Agent(Agent):
 
     def predict(self, screenshot: str, task) -> AgentPredictionResponse:
         task = task if self.step == 1 else None
+
+        # System Prompt
+        if len(self.history) == 0:
+            self.history = [
+                {
+                    "role": "system",
+                    "content": self.system_prompt
+                }
+            ]
         
         self.last_screenshot = screenshot
         agent_response, retrigger = self.iterate(screenshot=screenshot, task=task)
@@ -169,15 +210,25 @@ class Custom1Agent(Agent):
     
 class Custom2Agent(Custom1Agent):
     """ same custom-1, however has coding tools (python/terminal)"""
-    def __init__(self, vm_http_server: str, name: str = "custom-2"):
-        super().__init__(name=name)
+    def __init__(self, vm_http_server: str, name: str = "custom-2", max_images_in_history: int = None):
+        super().__init__(name=name, max_images_in_history=max_images_in_history)
         self.system_prompt = PLANNER_SYSTEM_PROMPT_V2
         self.grounder = Qwen3VLGrounder(model="qwen/qwen3-vl-32b-instruct")
         self.tool_set = CuaToolSet(grounder=self.grounder, enable_python_execution_tool=True, enable_terminal_command_tool=True, http_server=vm_http_server)
     
 class Custom3Agent(Custom2Agent):
-    """ same custom-2, with 'low-level' reasoning """
+    """ same custom-2, with max 10 screenshots in memory """
 
-    def __init__(self, vm_http_server: str, name: str = "custom-3"):
+    def __init__(self, vm_http_server: str, max_images_in_history: int = 5, name: str = "custom-3"):
+        super().__init__(name=name, vm_http_server=vm_http_server, max_images_in_history=5)
+
+
+class Custom4Agent(Custom3Agent):
+    def __init__(self, vm_http_server: str, name: str = "custom-4"):
         super().__init__(name=name, vm_http_server=vm_http_server)
-        self.reasoning_effort = "low"
+        self.tool_set = CuaToolSetNativeLocalization(
+            http_server=vm_http_server,
+            enable_python_execution_tool=True,
+            enable_terminal_command_tool=True,
+        )
+    
