@@ -1,5 +1,6 @@
 from agents.agent import Agent
 from agents.base_models.anthropic.claude_agent import BaseAnthropicAgent
+from agents.hybrid.skill_agent_2.skill_agent_2 import SkillAgent2
 
 
 def build_agent(agent_type: str, vm_http_server: str = None, max_images_in_history: int = None) -> Agent:
@@ -24,6 +25,11 @@ def build_agent(agent_type: str, vm_http_server: str = None, max_images_in_histo
         if vm_http_server is None:
             raise ValueError("vm_http_server must be provided for skill-agent.")
         return SkillAgent(vm_http_server=vm_http_server, max_images_in_history=max_images_in_history)
+    elif agent_type == "skill-agent-2":
+        from agents.hybrid.skill_agent_2.skill_agent_2 import SkillAgent2
+        if vm_http_server is None:
+            raise ValueError("vm_http_server must be provided for skill-agent-2.")
+        return SkillAgent2(vm_http_server=vm_http_server)
     elif agent_type == "custom-3":
         from agents.hybrid.agent import Custom3Agent
         if vm_http_server is None:

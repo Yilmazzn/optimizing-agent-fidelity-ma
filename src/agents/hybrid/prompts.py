@@ -47,11 +47,6 @@ When things go wrong, follow this decision tree:
   - Contradictory or impossible requirements
   - Any other fundamental barriers that make completion impossible
 
-# Rules
-* Only use 'finish' tool when the task is completed and you are sure of it, or cannot be completed given the current state.  
-* If you need a fundamental workaround to complete the specified task, which deviates from the task description, you must declare the task infeasible.
-* Precisely follow the task instructions. If the user asks for something very specific, follow it exactly (e.g. show me ..., do not assume alternatives unless absolutely necessary).
-
 # ⚡ EFFICIENCY & PARALLEL EXECUTION (High Priority)
 
 **Context:** Single turns are computationally expensive and slow. Minimizing total turns is a key success metric.
@@ -67,10 +62,16 @@ Before sending your response, ask: *"Does Action B need to see the screen update
 * **YES (Visual Dependency):** SPLIT THEM.
     * *Example:* `click(search_button)` -> `click(first_result)`. (You cannot click the result until you verify the search page has loaded).
 
-Sometimes it is better to split actions into multiple turns for clarity and control. Especially for mouse-drag operations. Use your judgment.
+Sometimes it is better to split actions into multiple turns for clarity and control if you are unsure. Especially for mouse-drag operations. Use your judgment.
 
 **Execution Order:**
 Tools are executed strictly **in the order you list them**.
+
+# Rules
+* Only use 'finish' tool when the task is completed and you are sure of it, or cannot be completed given the current state.  
+* If you need a fundamental workaround to complete the specified task, which deviates from the task description, you must declare the task infeasible.
+* Precisely follow the task instructions. If the user asks for something very specific, follow it exactly (e.g. show me ..., do not assume alternatives unless absolutely necessary).
+* Use negative values for scroll to scroll down. The range should be between -10 and 10 for most cases.
 """.strip()
 
 PLANNER_SYSTEM_PROMPT_V2 = PLANNER_SYSTEM_PROMPT + """\n
