@@ -11,9 +11,9 @@ class AgentPredictionRequest(BaseModel):
     domain: str
 
 class TokenUsage(BaseModel):
-    prompt_tokens: int
+    prompt_tokens: int = 0
     cached_prompt_tokens: Optional[int] = 0
-    completion_tokens: int
+    completion_tokens: int = 0
 
     def __add__(self, other: "TokenUsage") -> "TokenUsage":
         return TokenUsage(

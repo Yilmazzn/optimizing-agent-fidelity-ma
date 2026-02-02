@@ -121,5 +121,17 @@ def get_openai_client() -> openai.OpenAI:
         api_key=expect_env_var("AZURE_OPENAI_API_KEY"),
     )
 
+def create_embeddings(text: str | list[str]) -> list[list[float]]:
+    client = get_openai_client()
+    
+    input_text = text if isinstance(text, list) else [text]
+    
+    response = client.embeddings.create(
+        model="text-embedding-3-large",
+        input=input_text
+    )
+    
+    return [embedding.embedding for embedding in response.data]
+
 def get_tool_calls_from_response(response) -> list:
     return list(filter(lambda o: o.type == "function_call", response.output))

@@ -1,6 +1,8 @@
 .vscode/
 logs/
 **/.skills-archive/**
+**/.learning_logs/**
+**/.skills/**
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

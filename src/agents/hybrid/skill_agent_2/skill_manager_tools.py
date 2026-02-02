@@ -1,10 +1,10 @@
 import json
-from agents.hybrid.skill_agent_2.skill_book import SkillBook, SkillMergeError
+from agents.hybrid.skill_agent_2.skill_book import SkillBook, SkillMergeError, SkillError
 
 
 class SkillManagerTools:
-    def __init__(self, skillbook: SkillBook):
-        self.skillbook = skillbook
+    def __init__(self, skill_book: SkillBook):
+        self.skill_book = skill_book
 
     def get_tools(self) -> list[dict]:
         return [
@@ -15,12 +15,17 @@ class SkillManagerTools:
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "domain": {
+                            "type": "string",
+                            "enum": self.skill_book.get_domain_ids(),
+                            "description": "The domain to search within (e.g., 'gimp', 'chrome', 'os')."
+                        },
                         "situation": {
                             "type": "string",
                             "description": "Description of when the guidance applies. Used for similarity matching."
                         }
                     },
-                    "required": ["situation"],
+                    "required": ["domain", "situation"],
                     "additionalProperties": False
                 }
             },
@@ -35,7 +40,7 @@ class SkillManagerTools:
                             "type": "array",
                             "items": {
                                 "type": "string",
-                                "enum": self.skillbook.get_all_skill_ids()
+                                "enum": self.skill_book.get_all_skill_ids()
                             },
                             "description": "The list of skill IDs to read (e.g. ['libreoffice-calc/select-cells', 'gimp/transparency'])."
                         },
@@ -73,7 +78,7 @@ class SkillManagerTools:
                     "properties": {
                         "domain": {
                             "type": "string",
-                            "enum": self.skillbook.get_domain_ids(),
+                            "enum": self.skill_book.get_domain_ids(),
                             "description": "The domain for the new skill (e.g., 'gimp', 'chrome', 'os')."
                         },
                         "skill_name": {
@@ -106,7 +111,7 @@ class SkillManagerTools:
                     "properties": {
                         "skill_id": {
                             "type": "string",
-                            "enum": self.skillbook.get_all_skill_ids(),
+                            "enum": self.skill_book.get_all_skill_ids(),
                             "description": "The skill ID to update (e.g., 'gimp/transparency', 'chrome/tabs')."
                         },
                         "description": {
@@ -120,6 +125,10 @@ class SkillManagerTools:
                         "guidance": {
                             "type": "string",
                             "description": "The actionable instructions. Omit to keep existing."
+                        },
+                        "dismiss_annotations": {
+                            "type": "boolean",
+                            "description": "If true, clears all annotations from the skill if does not apply to new content anymore. Defaults to True."
                         }
                     },
                     "required": ["skill_id"],
@@ -135,7 +144,7 @@ class SkillManagerTools:
                     "properties": {
                         "skill_id": {
                             "type": "string",
-                            "enum": self.skillbook.get_all_skill_ids(),
+                            "enum": self.skill_book.get_all_skill_ids(),
                             "description": "The skill ID to annotate (e.g., 'gimp/transparency', 'chrome/tabs')."
                         },
                         "annotation": {
@@ -156,7 +165,7 @@ class SkillManagerTools:
                     "properties": {
                         "skill_id": {
                             "type": "string",
-                            "enum": self.skillbook.get_all_skill_ids(),
+                            "enum": self.skill_book.get_all_skill_ids(),
                             "description": "The skill ID to delete (e.g., 'gimp/transparency', 'chrome/tabs')."
                         }
                     },
@@ -173,12 +182,12 @@ class SkillManagerTools:
                 "properties": {
                     "source_skill_id": {
                         "type": "string",
-                        "enum": self.skillbook.get_all_skill_ids(),
+                        "enum": self.skill_book.get_all_skill_ids(),
                         "description": "The skill to merge FROM (will be deleted)."
                     },
                     "target_skill_id": {
                         "type": "string",
-                        "enum": self.skillbook.get_all_skill_ids(),
+                        "enum": self.skill_book.get_all_skill_ids(),
                         "description": "The skill to merge INTO (will be updated)."
                     },
                     "description": {
@@ -192,6 +201,10 @@ class SkillManagerTools:
                     "guidance": {
                         "type": "string",
                         "description": "Combined actionable instructions."
+                    },
+                    "dismiss_annotations": {
+                        "type": "boolean",
+                        "description": "If true, clears all annotations from the target skill. Defaults to True. But keep if at least one annotation might still apply"
                     }
                 },
                 "required": ["source_skill_id", "target_skill_id", "description", "context", "guidance"],
@@ -201,34 +214,48 @@ class SkillManagerTools:
         ]
     
     def parse_action(self, tool_call) -> dict:
+        try:
+            return self._parse_action(tool_call)
+        except SkillError as e:
+            return {
+                "type": "function_call_output",
+                "call_id": tool_call.call_id,
+                "output": str(e)
+            }
+    
+    def _parse_action(self, tool_call) -> dict:
         name = tool_call.name
         args = json.loads(tool_call.arguments)
-        
         tool_result = ""
 
         if name == "fetch_similar_skills":
-            raise NotImplementedError("fetch_similar_skills not implemented yet.")
+            domain = args["domain"]
+            situation = args["situation"]
+            tool_result = self.skill_book.find_similar_skills(
+                description=situation,
+                domain=domain,
+            )
         
         elif name == "read_skills":
             skill_ids = args["skill_ids"]
             skills_content = []
             for skill_id in skill_ids:
-                skill = self.skillbook.get_skill(skill_id)
+                skill = self.skill_book.get_skill(skill_id)
                 skills_content.append(skill.to_markdown())
             tool_result = "\n\n---\n\n".join(skills_content)
         
         elif name == "create_new_domain":
             domain_id = args["domain"]
             description = args["description"]
-            self.skillbook.add_domain(domain_id, description)
-            self.skillbook.save()
+            self.skill_book.add_domain(domain_id, description)
+            self.skill_book.save()
             tool_result = f"Domain '{domain_id}' created successfully."
         
         elif name == "create_skill":
             domain = args["domain"]
             skill_name = args["skill_name"]
 
-            skill = self.skillbook.add_skill(
+            skill = self.skill_book.add_skill(
                 domain_id=domain,
                 name=skill_name,
                 description=args["description"],
@@ -239,25 +266,26 @@ class SkillManagerTools:
         
         elif name == "update_skill":
             skill_id = args["skill_id"]
-            skill, changes = self.skillbook.update_skill(
+            skill, changes = self.skill_book.update_skill(
                 skill_id=skill_id,
                 description=args.get("description"),
                 context=args.get("context"),
-                guidance=args.get("guidance")
+                guidance=args.get("guidance"),
+                dismiss_annotations=args.get("dismiss_annotations", True)
             )
-            self.skillbook.save()
+            self.skill_book.save()
             changes_str = "; ".join(changes) if changes else "No changes made"
             tool_result = f"Skill '{skill_id}' updated. {changes_str}.\n\n{skill.to_markdown()}"
         
         elif name == "annotate_skill":
             skill_id = args["skill_id"]
-            skill = self.skillbook.get_skill(skill_id)
+            skill = self.skill_book.get_skill(skill_id)
             skill.annotate(args["annotation"])
             tool_result = f"Annotation added to skill '{skill_id}'."
         
         elif name == "delete_skill":
             skill_id = args["skill_id"]
-            self.skillbook.remove_skill(skill_id)
+            self.skill_book.remove_skill(skill_id)
             tool_result = f"Skill '{skill_id}' deleted successfully."
 
         elif name == "merge_skills":
@@ -272,14 +300,15 @@ class SkillManagerTools:
             if source_domain != target_domain:
                 raise SkillMergeError("Cannot merge skills from different domains.")
             
-            target_skill, _ = self.skillbook.update_skill(
+            target_skill, _ = self.skill_book.update_skill(
                 skill_id=target_skill_id,
                 description=args["description"],
                 context=args["context"],
-                guidance=args["guidance"]
+                guidance=args["guidance"],
+                dismiss_annotations=args.get("dismiss_annotations", True)
             )
-            self.skillbook.remove_skill(source_skill_id)
-            self.skillbook.save()
+            self.skill_book.remove_skill(source_skill_id)
+            self.skill_book.save()
             tool_result = f"Skills '{source_skill_id}' merged into '{target_skill_id}'.\n\n{target_skill.to_markdown()}"
             
         else:
