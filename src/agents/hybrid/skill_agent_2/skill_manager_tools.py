@@ -1,5 +1,7 @@
 import json
-from agents.hybrid.skill_agent_2.skill_book import SkillBook, SkillMergeError, SkillError
+
+from loguru import logger
+from agents.hybrid.skill_agent_2.skill_book import SkillBook, SkillFetchError, SkillMergeError, SkillError
 
 
 class SkillManagerTools:
@@ -20,12 +22,12 @@ class SkillManagerTools:
                             "enum": self.skill_book.get_domain_ids(),
                             "description": "The domain to search within (e.g., 'gimp', 'chrome', 'os')."
                         },
-                        "situation": {
+                        "skill_description": {
                             "type": "string",
                             "description": "Description of when the guidance applies. Used for similarity matching."
                         }
                     },
-                    "required": ["domain", "situation"],
+                    "required": ["domain", "skill_description"],
                     "additionalProperties": False
                 }
             },
@@ -51,7 +53,7 @@ class SkillManagerTools:
             },
             {
                 "type": "function",
-                "name": "create_new_domain",
+                "name": "create_domain",
                 "description": "Create a new domain in the skillbook. Use when a learning references an application that doesn't have a domain yet.",
                 "parameters": {
                     "type": "object",
@@ -59,13 +61,9 @@ class SkillManagerTools:
                         "domain": {
                             "type": "string",
                             "description": "The name for the new domain. Must be lowercase with hyphens, specific to an application (e.g., 'libreoffice-calc', 'visual-studio-code', 'firefox')."
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "A brief description of the application/domain for the INDEX.md (e.g., 'LibreOffice-Calc is a spreadsheet application for data analysis and calculations')."
                         }
                     },
-                    "required": ["domain", "description"],
+                    "required": ["domain"],
                     "additionalProperties": False
                 }
             },
@@ -87,18 +85,14 @@ class SkillManagerTools:
                         },
                         "description": {
                             "type": "string",
-                            "description": "A brief one-line description of the skill's purpose."
+                            "description": "A brief description of the skill's purpose. Used for triggering skill retrieval."
                         },
-                        "context": {
+                        "body": {
                             "type": "string", 
-                            "description": "When this skill applies (general, not task-specific)."
-                        },
-                        "guidance": {
-                            "type": "string",
-                            "description": "The actionable instructions. Use numbered steps for procedures."
+                            "description": "The complete skill content in markdown format. Contains all instructions, cases, and guidance."
                         }
                     },
-                    "required": ["domain", "skill_name", "description", "context", "guidance"],
+                    "required": ["domain", "skill_name", "description", "body"],
                     "additionalProperties": False
                 }
             },
@@ -118,13 +112,9 @@ class SkillManagerTools:
                             "type": "string",
                             "description": "A brief one-line description of the skill's purpose. Only provide if the description needs to be changed."
                         },
-                        "context": {
+                        "body": {
                             "type": "string",
-                            "description": "When this skill applies. Omit to keep existing."
-                        },
-                        "guidance": {
-                            "type": "string",
-                            "description": "The actionable instructions. Omit to keep existing."
+                            "description": "The complete skill content in markdown. Omit to keep existing."
                         },
                         "dismiss_annotations": {
                             "type": "boolean",
@@ -194,26 +184,23 @@ class SkillManagerTools:
                         "type": "string",
                         "description": "One-line summary for the merged skill."
                     },
-                    "context": {
+                    "body": {
                         "type": "string",
-                        "description": "When the merged skill applies (should cover both original situations)."
-                    },
-                    "guidance": {
-                        "type": "string",
-                        "description": "Combined actionable instructions."
+                        "description": "Combined skill content in markdown (should cover both original skills)."
                     },
                     "dismiss_annotations": {
                         "type": "boolean",
                         "description": "If true, clears all annotations from the target skill. Defaults to True. But keep if at least one annotation might still apply"
                     }
                 },
-                "required": ["source_skill_id", "target_skill_id", "description", "context", "guidance"],
+                "required": ["source_skill_id", "target_skill_id", "description", "body"],
                 "additionalProperties": False
             }
         }
         ]
     
     def parse_action(self, tool_call) -> dict:
+        logger.info(f"Parsing tool call: {tool_call.name} with args: \n{json.dumps(json.loads(tool_call.arguments), indent=2)}")
         try:
             return self._parse_action(tool_call)
         except SkillError as e:
@@ -230,24 +217,27 @@ class SkillManagerTools:
 
         if name == "fetch_similar_skills":
             domain = args["domain"]
-            situation = args["situation"]
+            skill_description = args["skill_description"]
             tool_result = self.skill_book.find_similar_skills(
-                description=situation,
+                description=skill_description,
                 domain=domain,
+                threshold=0.4,
+                max_skills=3
             )
         
         elif name == "read_skills":
             skill_ids = args["skill_ids"]
+            if len(skill_ids) > 4:
+                raise SkillFetchError(f"Too many skills requested: {len(skill_ids)}. Maximum at a time is 4.")
             skills_content = []
             for skill_id in skill_ids:
                 skill = self.skill_book.get_skill(skill_id)
-                skills_content.append(skill.to_markdown())
+                skills_content.append(skill.to_evaluation_markdown())
             tool_result = "\n\n---\n\n".join(skills_content)
         
-        elif name == "create_new_domain":
+        elif name == "create_domain":
             domain_id = args["domain"]
-            description = args["description"]
-            self.skill_book.add_domain(domain_id, description)
+            self.skill_book.add_domain(domain_id)
             self.skill_book.save()
             tool_result = f"Domain '{domain_id}' created successfully."
         
@@ -259,8 +249,7 @@ class SkillManagerTools:
                 domain_id=domain,
                 name=skill_name,
                 description=args["description"],
-                context=args["context"],
-                guidance=args["guidance"]
+                body=args["body"]
             )
             tool_result = f"Skill `{domain}/{skill_name}` created successfully.\n\n{skill.to_markdown()}"
         
@@ -269,8 +258,7 @@ class SkillManagerTools:
             skill, changes = self.skill_book.update_skill(
                 skill_id=skill_id,
                 description=args.get("description"),
-                context=args.get("context"),
-                guidance=args.get("guidance"),
+                body=args.get("body"),
                 dismiss_annotations=args.get("dismiss_annotations", True)
             )
             self.skill_book.save()
@@ -303,8 +291,7 @@ class SkillManagerTools:
             target_skill, _ = self.skill_book.update_skill(
                 skill_id=target_skill_id,
                 description=args["description"],
-                context=args["context"],
-                guidance=args["guidance"],
+                body=args["body"],
                 dismiss_annotations=args.get("dismiss_annotations", True)
             )
             self.skill_book.remove_skill(source_skill_id)

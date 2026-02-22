@@ -165,6 +165,10 @@ class FrictionLearning(BaseModel):
     why_it_matters: str = Field(
         description="What made this hard? Why would a less capable agent struggle here?"
     )
+    steps_wasted: int = Field(
+        ge=1,
+        description="Approximately how many actions were spent struggling before finding the solution"
+    )
     scope: str = Field(
         description="Where this applies: 'general', 'os', or application name (e.g., 'gimp', 'chrome', 'libreoffice-calc')"
     )
@@ -174,13 +178,13 @@ class FrictionLearning(BaseModel):
     guidance: str = Field(
         description="Clear, actionable instructions—what TO do. Use numbered steps for procedures. Include exact menu paths, shortcuts, or UI elements."
     )
-    confidence: Literal["low", "medium", "high"] = Field(
-        description="Certainty level: 'high' = correct and generalizable, 'medium' = fairly sure, 'low' = might be situational"
+    generalizability: Literal["low", "medium", "high"] = Field(
+        description="Certainty level: 'high' = correct and generalizable across tasks within domain, 'medium' = fairly sure, 'low' = might be situational"
     )
-    steps_wasted: int = Field(
-        ge=1,
-        description="Approximately how many actions were spent struggling before finding the solution"
+    resolved: bool = Field(
+        description="Whether the agent eventually found a working solution after the friction"
     )
+
 
 
 class DiscoveredLearning(BaseModel):
@@ -205,9 +209,10 @@ class DiscoveredLearning(BaseModel):
     guidance: str = Field(
         description="Clear, actionable instructions—what TO do. Use numbered steps for procedures. Include exact menu paths, shortcuts, or UI elements."
     )
-    confidence: Literal["low", "medium", "high"] = Field(
-        description="Certainty level: 'high' = correct and generalizable, 'medium' = fairly sure, 'low' = might be situational"
+    generalizability: Literal["low", "medium", "high"] = Field(
+        description="Certainty level: 'high' = correct and generalizable across tasks within domain, 'medium' = fairly sure, 'low' = might be situational"
     )
+
 
 Learning = FrictionLearning | DiscoveredLearning
 
@@ -252,7 +257,7 @@ class SkillsReflector:
         skills_list = [self.skill_book.get_skill(skill_id) for skill_id in skill_ids]
         md_lines = []
         for skill in skills_list:
-            md_lines.append(f"- `{skill.skill_id}`: {skill.description}")
+            md_lines.append(f"- `{skill.id}`: {skill.description}")
         return "\n".join(md_lines)
         
     def reflect(self, previous_response_id: str, used_skill_ids: list[str]) -> tuple[TrajectoryReflection, TokenUsage, str]:

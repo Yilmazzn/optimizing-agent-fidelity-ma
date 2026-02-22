@@ -6,7 +6,7 @@ from loguru import logger
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, wait_exponential
 
-from agents.grounders.grounder import Grounder
+from agents.grounders.grounder import Grounder, GroundingError
 
 
 _computer_use_tools = [
@@ -216,6 +216,7 @@ def _normalize_key(key: str) -> str:
         "arrowleft": "left",
         "arrowright": "right",
         "meta": "win",
+        "control": "ctrl",
     }
     return conversion.get(k, k)
 
@@ -278,14 +279,22 @@ class CuaToolSet:
                 "triple": 3
             }.get(click_type, 1)
 
-            coords, usage = self.grounder.locate_ui_element_coords(ui_element=element, screenshot=screenshot)
+            try:
+                coords, usage = self.grounder.locate_ui_element_coords(ui_element=element, screenshot=screenshot)
+            except GroundingError as e:
+                tool_result = str(e)
+                return tool_result, "", usage, False
             pyautogui_actions.append(f"pyautogui.click({coords[0]}, {coords[1]}, clicks={clicks}, button='{mouse_button}', interval=0.1)")
             tool_result = f"{click_type} clicked {mouse_button} button at {coords}."
         elif name == "move_cursor_to_element":
             if element is None:
                 raise ValueError(f"move_cursor_to_element requires 'element' argument. Got arguments {args}")
             
-            coords, usage  = self.grounder.locate_ui_element_coords(ui_element=element, screenshot=screenshot)
+            try:
+                coords, usage = self.grounder.locate_ui_element_coords(ui_element=element, screenshot=screenshot)
+            except GroundingError as e:
+                tool_result = str(e)
+                return tool_result, "", usage, False
             pyautogui_actions.append(f"pyautogui.moveTo({coords[0]}, {coords[1]}, duration=0.2)")
             tool_result = f"Moved cursor to {coords}."
 
@@ -293,8 +302,12 @@ class CuaToolSet:
             if start_element is None or target_element is None:
                 raise ValueError(f"left_click_drag requires 'start_element' and 'target_element' arguments. Got arguments {args}")
             
-            start_coords, usage_start = self.grounder.locate_ui_element_coords(ui_element=start_element, screenshot=screenshot)
-            target_coords, usage_target = self.grounder.locate_ui_element_coords(ui_element=target_element, screenshot=screenshot)
+            try:
+                start_coords, usage_start = self.grounder.locate_ui_element_coords(ui_element=start_element, screenshot=screenshot)
+                target_coords, usage_target = self.grounder.locate_ui_element_coords(ui_element=target_element, screenshot=screenshot)
+            except GroundingError as e:
+                tool_result = str(e)
+                return tool_result, "", usage, False
             usage = (usage_start[0] + usage_target[0], usage_start[1] + usage_target[1])
 
             pyautogui_actions.append(f"pyautogui.moveTo({start_coords[0]}, {start_coords[1]}, duration=0.2)")

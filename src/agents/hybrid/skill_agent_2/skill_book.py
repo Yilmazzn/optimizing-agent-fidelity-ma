@@ -35,7 +35,7 @@ class SkillDomainNotFoundError(SkillError):
 
 class SkillMetrics(BaseModel):
     times_requested: int = 0
-    times_followed: int = 0
+    times_followed: float = 0.0
     positive_impact: int = 0
     negative_impact: int = 0
     neutral_impact: int = 0
@@ -44,8 +44,7 @@ class Skill(BaseModel):
     domain: str
     name: str
     description: str
-    context: str
-    guidance: str
+    body: str
     annotations: list[str] = Field(default_factory=list)
     metrics: SkillMetrics = Field(default_factory=SkillMetrics)
     embedding: list[float] | None = Field(default=None, exclude=True)
@@ -58,25 +57,18 @@ class Skill(BaseModel):
     @property
     def id(self) -> str:
         return f"{self.domain}/{self.name}"
-
-    @property
-    def content(self) -> str:
-        """Generate markdown content from context and guidance."""
-        return f"## Context\n{self.context}\n\n## Guidance\n{self.guidance}"
     
     def save(self, domain_dir: Path):
         """Save the skill as a markdown file with YAML frontmatter."""
         metadata = {
             "name": self.name,
             "description": self.description,
-            "context": self.context,
-            "guidance": self.guidance,
             "annotations": self.annotations,
             "metrics": self.metrics.model_dump(),
         }
         
-        # Create frontmatter post with metadata and content
-        post = frontmatter.Post(self.to_markdown(), **metadata)
+        # Create frontmatter post with metadata and body as markdown content
+        post = frontmatter.Post(self.body, **metadata)
         
         skill_path = domain_dir / f"{self.name}.md"
         with open(skill_path, "w", encoding="utf-8") as f:
@@ -111,7 +103,7 @@ class Skill(BaseModel):
         return (
             f"# [`{self.id}`] {self.title}\n\n"
             f"## Description\n{self.description}\n\n"
-            f"{self.content}\n\n"
+            f"{self.body}\n\n"
             f"{annotations_md}\n\n"
             f"{metrics_md}"
         )
@@ -125,7 +117,7 @@ class Skill(BaseModel):
             annotations_md = "\n\n## Annotations\n"
             annotations_md += "\n".join([f"- {note}" for note in self.annotations])
         
-        return f"# [`{self.id}`] {self.title}\n\n{self.content}{annotations_md}"
+        return f"# [`{self.id}`] {self.title}\n\n{self.body}{annotations_md}"
 
     def annotate(self, note: str):
         self.annotations.append(note)
@@ -133,7 +125,6 @@ class Skill(BaseModel):
 
 class SkillDomain(BaseModel):
     id: str
-    description: str
     skills: dict[str, Skill] = Field(default_factory=dict)
 
     def add_skill(self, skill: Skill):
@@ -150,12 +141,16 @@ class SkillDomain(BaseModel):
     def list_skills(self) -> str:
         if not self.skills:
             return f"No skills in domain '{self.id}'."
-        return "\n".join(
-            [f"- `{self.id}/{name}`: {skill.title}" for name, skill in self.skills.items()]
-        )
+        skill_list = []
+        for _, skill in self.skills.items():
+            skill_list.append(f"- `{self.id}/{skill.name}`: {skill.description}")
+        return "\n".join(skill_list)
 
     def get_skill_ids(self) -> list[str]:
         return [f"{self.id}/{name}" for name in self.skills.keys()]
+
+    def get_skills(self) -> list[Skill]:
+        return list(self.skills.values())
 
 
 class SkillBook(BaseModel):
@@ -166,14 +161,6 @@ class SkillBook(BaseModel):
         location = Path(location) if location else _SKILL_DIR
         domains: dict[str, SkillDomain] = {}
         embeddings_cache: dict[str, dict] = {}
-
-        # Load domain index
-        index_path = location / "index.json"
-        if index_path.exists():
-            with open(index_path, "r", encoding="utf-8") as f:
-                domains_data = json.load(f)
-                for d in domains_data:
-                    domains[d["id"]] = SkillDomain(id=d["id"], description=d["description"])
 
         # Load existing embeddings cache
         embeddings_path = location / "embeddings.json"
@@ -187,7 +174,7 @@ class SkillBook(BaseModel):
                 continue
             domain_id = domain_dir.name
             if domain_id not in domains:
-                domains[domain_id] = SkillDomain(id=domain_id, description="")
+                domains[domain_id] = SkillDomain(id=domain_id)
 
             for skill_file in domain_dir.iterdir():
                 if skill_file.suffix != ".md":
@@ -196,6 +183,7 @@ class SkillBook(BaseModel):
                     post = frontmatter.load(f)
                     skill_data = post.metadata
                     skill_data["domain"] = domain_id
+                    skill_data["body"] = post.content
                     skill = Skill(**skill_data)
                     
                     # Restore embedding from cache if available
@@ -255,10 +243,10 @@ class SkillBook(BaseModel):
                 }
         
         with open(embeddings_path, "w", encoding="utf-8") as f:
-            json.dump(embeddings_data, f)
+            json.dump(embeddings_data, f, indent=4, ensure_ascii=False)
         logger.info(f"Saved embeddings to {embeddings_path}")
 
-    def save(self, location: Path | str = None):
+    def save(self, location: Path | str = None, omit_embeddings: bool = False):
         location = Path(location) if location else _SKILL_DIR
         os.makedirs(location, exist_ok=True)
 
@@ -270,21 +258,14 @@ class SkillBook(BaseModel):
             for skill_name, skill in domain.skills.items():
                 skill.save(domain_dir)
 
-        # Save domain index
-        with open(location / "index.json", "w", encoding="utf-8") as f:
-            domains_data = [
-                {"id": d.id, "description": d.description} for d in self.domains.values()
-            ]
-            json.dump(domains_data, f, indent=4)
-        
-        # Save embeddings
-        self._save_embeddings(location)
+        if not omit_embeddings:
+            self._save_embeddings(location)
 
     def list_domains(self) -> str:
         if not self.domains:
             return "No domains available."
         return "\n".join(
-            [f"- `{d.id}`: {d.description}" for d in self.domains.values()]
+            [f"- `{d.id}`" for d in self.domains.values()]
         )
 
     def get_domain(self, domain_id: str) -> SkillDomain:
@@ -294,10 +275,10 @@ class SkillBook(BaseModel):
             )
         return self.domains[domain_id]
 
-    def add_domain(self, domain_id: str, description: str) -> SkillDomain:
+    def add_domain(self, domain_id: str) -> SkillDomain:
         if domain_id in self.domains:
             raise SkillCreationError(f"Domain '{domain_id}' already exists.")
-        self.domains[domain_id] = SkillDomain(id=domain_id, description=description)
+        self.domains[domain_id] = SkillDomain(id=domain_id)
         return self.domains[domain_id]
 
     def get_domain_ids(self) -> list[str]:
@@ -313,47 +294,55 @@ class SkillBook(BaseModel):
         domain = self.get_domain(domain_id)
         return domain.get_skill(skill_name)
 
-    def add_skill(self, domain_id: str, name: str, description: str, context: str, guidance: str) -> Skill:
+    def add_skill(self, domain_id: str, name: str, description: str, body: str) -> Skill:
         domain = self.get_domain(domain_id)
         
         if domain_id in name: 
             raise SkillCreationError(f"Skill name '{name}' should not include domain prefix '{domain_id}/'.")
-        if len(name) < 3 or len(name) > 20:
-            raise SkillCreationError("Skill name must be between 3 and 20 characters.")
+        if len(name) < 3 or len(name) > 30:
+            raise SkillCreationError("Skill name must be between 3 and 30 characters.")
         if not all(c.islower() or c == '-' for c in name):
             raise SkillCreationError("Skill name must be lowercase and can only contain letters and hyphens.")
 
         if len(description) < 10 or len(description) > 100:
             raise SkillCreationError("Skill description must be between 10 and 100 characters.")
-        if len(context) < 10 or len(context) > 500:
-            raise SkillCreationError("Skill context must be between 10 and 500 characters.")
-        if len(guidance) < 20 or len(guidance) > 2000:
-            raise SkillCreationError("Skill guidance must be between 20 and 2000 characters.")
+        if len(body) < 20 or len(body) > 3000:
+            raise SkillCreationError("Skill body must be between 20 and 3000 characters.")
 
         skill = Skill(
             domain=domain_id,
             name=name,
             description=description,
-            context=context,
-            guidance=guidance
+            body=body
         )
 
         domain.add_skill(skill)
         return skill
     
-    def remove_skill(self, skill_id: str):
+    def remove_skill(self, skill_id: str, location: Path | str = None):
         domain_id, skill_name = skill_id.split("/", 1)
         domain = self.get_domain(domain_id)
         if skill_name not in domain.skills:
             raise SkillFetchError(f"Skill '{skill_id}' not found.")
+        
+        # Delete the skill file from disk
+        location = Path(location) if location else _SKILL_DIR
+        skill_path = location / domain_id / f"{skill_name}.md"
+        if skill_path.exists():
+            skill_path.unlink()
+            logger.info(f"Deleted skill file: {skill_path}")
+        
+        # Remove from in-memory dictionary
         del domain.skills[skill_name]
+        
+        # Update embeddings cache to remove the deleted skill
+        self._save_embeddings(location)
 
     def update_skill(
         self,
         skill_id: str,
         description: str = None,
-        context: str = None,
-        guidance: str = None,
+        body: str = None,
         dismiss_annotations: bool = False
     ) -> tuple[Skill, list[str]]:
         
@@ -365,13 +354,9 @@ class SkillBook(BaseModel):
             skill.description = description
             changes.append(f"Description updated from '{old_description}' to '{skill.description}'")
         
-        if context is not None:
-            skill.context = context
-            changes.append("Context updated")
-        
-        if guidance is not None:
-            skill.guidance = guidance
-            changes.append("Guidance updated")
+        if body is not None:
+            skill.body = body
+            changes.append("Body updated")
         
         if dismiss_annotations:
             skill.annotations = []
@@ -396,11 +381,21 @@ class SkillBook(BaseModel):
             skill_ids.extend(domain.get_skill_ids())
         return skill_ids
 
+    def _cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
+        """Calculate cosine similarity between two vectors."""
+        dot_product = sum(a * b for a, b in zip(vec1, vec2))
+        magnitude1 = sum(a * a for a in vec1) ** 0.5
+        magnitude2 = sum(b * b for b in vec2) ** 0.5
+        if magnitude1 == 0 or magnitude2 == 0:
+            return 0.0
+        return dot_product / (magnitude1 * magnitude2)
+
     def find_similar_skills(
         self, 
         description: str, 
         domain: str,
-        threshold: float = 0.85
+        threshold: float = 0.6,
+        max_skills: int = 3
     ) -> str:
         """
         Find skills similar to the given description within a domain.
@@ -408,7 +403,8 @@ class SkillBook(BaseModel):
         Args:
             description: The description to search for similar skills.
             domain: The domain to search within.
-            threshold: Similarity threshold (default 0.85).
+            threshold: Similarity threshold (default 0.6).
+            max_skills: Maximum number of similar skills to return (default 3).
             
         Returns:
             Markdown formatted string of similar skills separated by ---, 
@@ -429,36 +425,64 @@ class SkillBook(BaseModel):
         logger.info(f"Creating embedding for similarity search in domain '{domain}'")
         query_embedding = create_embeddings(description)[0]
         
-        # Calculate cosine similarity
-        def cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
-            dot_product = sum(a * b for a, b in zip(vec1, vec2))
-            magnitude1 = sum(a * a for a in vec1) ** 0.5
-            magnitude2 = sum(b * b for b in vec2) ** 0.5
-            if magnitude1 == 0 or magnitude2 == 0:
-                return 0.0
-            return dot_product / (magnitude1 * magnitude2)
-        
         # Find similar skills
         similar_skills: list[tuple[Skill, float]] = []
         for skill in skills_with_embeddings:
-            similarity = cosine_similarity(query_embedding, skill.embedding)
+            similarity = self._cosine_similarity(query_embedding, skill.embedding)
             if similarity >= threshold:
                 similar_skills.append((skill, similarity))
         
         if not similar_skills:
             return f"No similar skills found in domain '{domain}'."
         
-        # Sort by similarity (highest first)
+        # Sort by similarity (highest first) and take top max_skills
         similar_skills.sort(key=lambda x: x[1], reverse=True)
+        similar_skills = similar_skills[:max_skills]
         
         # Format as markdown separated by ---
         markdown_parts = []
         for skill, similarity in similar_skills:
             markdown_parts.append(
-                f"{skill.to_markdown()}\n\n*Similarity: {similarity:.2%}*"
+                f"{skill.to_evaluation_markdown()}\n\n*Similarity: {similarity:.2%}*"
             )
         
         return "\n\n---\n\n".join(markdown_parts)
+
+    def find_similar_skill_pairs(
+        self,
+        domain: str,
+        threshold: float = 0.8
+    ) -> list[tuple[Skill, Skill, float]]:
+        """
+        Find pairs of skills within a domain that are similar to each other.
+        
+        Args:
+            domain: The domain to search within.
+            threshold: Similarity threshold (default 0.8).
+            
+        Returns:
+            List of tuples (skill1, skill2, similarity) sorted by similarity descending.
+        """
+        domain_obj = self.get_domain(domain)
+        skills = list(domain_obj.skills.values())
+        
+        # Filter skills that have embeddings
+        skills_with_embeddings = [s for s in skills if s.embedding is not None]
+        if len(skills_with_embeddings) < 2:
+            return []
+        
+        # Find similar pairs
+        similar_pairs: list[tuple[Skill, Skill, float]] = []
+        for i, skill1 in enumerate(skills_with_embeddings):
+            for skill2 in skills_with_embeddings[i + 1:]:
+                similarity = self._cosine_similarity(skill1.embedding, skill2.embedding)
+                if similarity >= threshold:
+                    similar_pairs.append((skill1, skill2, similarity))
+        
+        # Sort by similarity (highest first)
+        similar_pairs.sort(key=lambda x: x[2], reverse=True)
+        
+        return similar_pairs
     
     def get_all_skills(self) -> list[Skill]:
         skills = []
@@ -469,21 +493,4 @@ class SkillBook(BaseModel):
 
 if __name__ == "__main__":
     # Example usage
-    skill_book = SkillBook()
-    skill_book.add_domain("browser", "Skills for browser automation")
-
-    skill = Skill(
-        name="open-browser",
-        description="A skill for opening a web browser.",
-        title="Open Web Browser",
-        content="Instructions to open a web browser.",
-    )
-
-    skill_id = skill_book.add_skill("browser", skill)
-    print(f"Added skill: {skill_id}")
-
-    # Retrieve skill by ID
-    retrieved = skill_book.get_skill("browser/open-browser")
-    print(retrieved.to_markdown())
-
-
+    skill_book = SkillBook.load()

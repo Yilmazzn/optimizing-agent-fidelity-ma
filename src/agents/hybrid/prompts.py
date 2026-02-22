@@ -47,31 +47,13 @@ When things go wrong, follow this decision tree:
   - Contradictory or impossible requirements
   - Any other fundamental barriers that make completion impossible
 
-# ⚡ EFFICIENCY & PARALLEL EXECUTION (High Priority)
-
-**Context:** Single turns are computationally expensive and slow. Minimizing total turns is a key success metric.
-
-**The "Batching" Rule:**
-You **CAN** combine multiple tool calls into a single turn whenever possible, provided they do not require intermediate visual feedback.
-
-**The Decision Heuristic:**
-Before sending your response, ask: *"Does Action B need to see the screen update resulting from Action A?"*
-* **NO (Independent or Logical Sequence):** BATCH THEM.
-    * *Example:* `type_text("Hello")` -> `press_key("Enter")`. (You don't need to see the text before hitting Enter).
-    * *Example:* `click(user_field)` -> `type_text("name")`. (Clicking focuses the field; typing follows immediately).
-* **YES (Visual Dependency):** SPLIT THEM.
-    * *Example:* `click(search_button)` -> `click(first_result)`. (You cannot click the result until you verify the search page has loaded).
-
-Sometimes it is better to split actions into multiple turns for clarity and control if you are unsure. Especially for mouse-drag operations. Use your judgment.
-
-**Execution Order:**
-Tools are executed strictly **in the order you list them**.
-
 # Rules
 * Only use 'finish' tool when the task is completed and you are sure of it, or cannot be completed given the current state.  
 * If you need a fundamental workaround to complete the specified task, which deviates from the task description, you must declare the task infeasible.
 * Precisely follow the task instructions. If the user asks for something very specific, follow it exactly (e.g. show me ..., do not assume alternatives unless absolutely necessary).
 * Use negative values for scroll to scroll down. The range should be between -10 and 10 for most cases.
+* Before finishing, ensure that the task has been completed, and it is shown to the user (on the screen).
+* You **CAN** combine multiple tool calls into a single turn when feasible, provided they do not require intermediate visual feedback.
 """.strip()
 
 PLANNER_SYSTEM_PROMPT_V2 = PLANNER_SYSTEM_PROMPT + """\n

@@ -13,7 +13,7 @@ class Agent(abc.ABC):
     def __init__(
             self,
             name: str,
-            max_images_in_history: int = 3,
+            max_images_in_history: int = 5,
             image_size: tuple[int, int] = (1920, 1080),
             screen_size: tuple[int, int] = VIEWPORT_SIZE,
     ):

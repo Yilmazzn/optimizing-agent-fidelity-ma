@@ -2,7 +2,7 @@
 
 ## Overview
 
-A learning framework where a capable model generates detailed, actionable skills from its own traces. The primary objective is **knowledge distillation**: enabling smaller, less capable models to achieve higher success rates by providing them with explicit procedural knowledge. Optimization of the capable model itself is a secondary benefit.
+A learning framework where a capable model generates detailed, actionable skills from its own traces. The primary objective is **knowledge distillation**: enabling smaller, less capable models to achieve higher success rates by providing them with explicit procedural knowledge.
 
 ---
 
@@ -13,14 +13,12 @@ Skills are for **non-obvious knowledge**—things a capable model might figure o
 **Not skills:**
 - "Click buttons to interact with them"
 - "Scroll to see more content"
-- "Type in text fields"
+- "Use Ctrl+C to copy"
 
 **Skills:**
 - "Color to Alpha is at Filters > Color, not in the toolbox"
 - "Ctrl+G opens cell navigation in LibreOffice Calc"
 - "Site permissions are accessible via the lock icon"
-
-The agent already knows *how* to use a computer. Skills tell it *where things are* and *what works best*.
 
 ---
 
@@ -33,101 +31,31 @@ The agent already knows *how* to use a computer. Skills tell it *where things ar
 └─────────────────────────┬───────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Reflection Phase (two parallel agents)                     │
-│  - Skill Reflector: evaluates retrieved skills              │
-│  - Trajectory Learner: extracts new guidance                │
-│  Output: markdown (preserves context cache)                 │
+│  Trajectory Reflector                                       │
+│  - Reviews used skills                                      │
+│  - Extracts new learnings                                   │
+│  Output: TrajectoryReflection (structured)                  │
 └─────────────────────────┬───────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Split markdown into individual learnings/reviews           │
+│  Programmatic Handler                                       │
+│  - Updates metrics for all reviews                          │
+│  - Filters which reviews/learnings need agent processing    │
 └─────────────────────────┬───────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  For each learning/review (sequentially):                   │
-│                                                             │
-│    Skillbook Manager                                        │
-│    - Fetches similar skills                                 │
-│    - Decides action + outputs content                       │
-│                     ↓                                       │
-│    Apply to skillbook immediately                           │
-│    (next iteration sees updated state)                      │
+│  Skill Manager Agent (for filtered items)                   │
+│  - Processes reviews and learnings one at a time            │
+│  - Uses tools to read/write skillbook                       │
+│  - Decides: create / update / merge / annotate / delete     │
 └─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## The Computer Use Agent
-
-Receives screenshots and executes tools to interact with the computer in a multi-turn fashion until task completion. During execution, the agent can request skills from the skillbook. Skills are learnings from past runs—the agent doesn't have to follow them blindly, but they provide guidance.
-
-### Runtime Skill Access
-
-The agent always has in context:
-- Domain list with brief descriptions
-- Knowledge that it can request skills anytime
-
-```markdown
-## Skillbook
-
-You have access to a skillbook with guidance for various applications.
-
-Domains:
-- **os**: System interactions (file dialogs, clipboard, windows)
-- **gimp**: Image editing
-- **chrome**: Browser
-- **libreoffice-calc**: Spreadsheets
-
-Use `read_domain_index(domain)` to see available skills.
-Use `read_skill(domain, skill)` to read a skill.
-
-Request skills when you encounter non-obvious UI or need specific guidance.
-You can request skills anytime—before starting or mid-task.
-```
-
-### Skill Retrieval Tools
-
-```python
-read_domain_index(domain: Literal["os", "gimp", "chrome", "libreoffice-calc", ...])
-```
-Returns the INDEX.md for that domain—list of available skills with descriptions.
-
-```python
-read_skill(domain: Literal["os", "gimp", ...], skill: str)
-```
-Returns the full skill content.
-
-Domain parameter is constrained to known domains (enables constrained generation). Skill parameter is free-form (agent has just seen the index).
-
-### Runtime Flow
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Agent starts task                                          │
-│                                                             │
-│  Always in context:                                         │
-│  - Domain list with brief descriptions                      │
-│  - Knowledge that it can request skills anytime             │
-└─────────────────────────┬───────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Agent reasons: "I'll be working in GIMP, let me see        │
-│  what skills are available"                                 │
-│                                                             │
-│  → read_domain_index('gimp')                                │
-└─────────────────────────┬───────────────────────────────────┘
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Agent sees skill list with descriptions                    │
-│                                                             │
-│  → read_skill('gimp', 'transparency')                       │
-└─────────────────────────┬───────────────────────────────────┘
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Agent works on task                                        │
-│                                                             │
-│  Mid-task: "I need to export this, let me get that skill"   │
-│  → read_skill('gimp', 'export')                             │
+│  Periodic Cleanup                                           │
+│  - Flags negative-heavy skills                              │
+│  - Finds duplicate candidates                               │
+│  - Identifies low follow-rate skills                        │
+│  - Passes to Skill Manager for resolution                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -139,20 +67,18 @@ Flat hierarchy—one folder per domain, no nesting within domains.
 
 ```
 skillbook/
-├── DOMAINS.md                      # Always in context (brief)
+├── DOMAINS.md                      # Always in agent context (brief)
 │
 ├── os/
 │   ├── INDEX.md
 │   ├── file-dialogs.md
-│   ├── clipboard.md
-│   └── window-management.md
+│   └── clipboard.md
 │
 ├── gimp/
 │   ├── INDEX.md
 │   ├── transparency.md
 │   ├── layers.md
-│   ├── export.md
-│   └── selection.md
+│   └── export.md
 │
 ├── chrome/
 │   ├── INDEX.md
@@ -161,554 +87,608 @@ skillbook/
 │
 └── libreoffice-calc/
     ├── INDEX.md
-    ├── cell-selection.md
-    ├── formulas.md
-    └── charts.md
+    ├── cell-navigation.md
+    └── formulas.md
 ```
-
-### DOMAINS.md (Always in Context)
-
-Brief domain descriptions only. Kept minimal to avoid bloating system prompt.
-
-```markdown
-## Skillbook
-
-Domains:
-- **os**: System interactions (file dialogs, clipboard, windows)
-- **gimp**: Image editing
-- **chrome**: Browser
-- **libreoffice-calc**: Spreadsheets
-```
-
-### INDEX.md Format
-
-Verbose skill descriptions to help agent decide relevance. Auto-generated programmatically from skill files.
-
-```markdown
-# GIMP
-
-Image editing application for photo manipulation, digital art, and graphic design.
-
-## Skills
-
-- **transparency**: Making backgrounds transparent, removing solid colors, using Color to Alpha, adding alpha channels to layers
-
-- **layers**: Creating and managing layers, layer ordering, visibility, merging layers, layer groups, layer masks
-
-- **export**: Saving as PNG/JPEG/WebP, export vs save distinction, preserving transparency in exports, quality settings
-
-- **selection**: Selection tools (rectangle, ellipse, free, fuzzy), selection modes, feathering, select by color, grow/shrink selection
-
-- **color-tools**: Color adjustments, curves, levels, hue-saturation, color balance, desaturate, invert
-
-- **transform**: Scaling, rotating, flipping, perspective, cropping, canvas resize
-```
-
-Descriptions are **action-oriented**—they describe what the agent can accomplish, not just topics.
 
 ### Skill File Format
 
 ```markdown
-# Transparency in GIMP
+## Situation
 
-## Trigger
-- **Scope**: gimp
-- **Situation**: Making colors or backgrounds transparent
+{When this guidance applies — general context, not task-specific}
 
 ## Guidance
 
-### Color to Alpha
-Use Filters > Color > Color to Alpha to make a specific color transparent.
+{Concrete, actionable steps. Numbered for procedures.}
 
-1. Select the target layer in the Layers panel
-2. Go to Filters > Color > Color to Alpha
-3. Click the color preview to select the color
-4. Adjust threshold if edges appear rough
-5. Click OK
+## Annotations
 
-Export as PNG to preserve transparency.
-
-### Alpha Channel
-To add transparency support to a layer:
-1. Right-click layer in Layers panel
-2. Select "Add Alpha Channel"
-
-## Metadata
-- **Positive**: 12
-- **Negative**: 1
-- **Neutral**: 3
-- **Last validated**: 2024-01-15
-- **Annotations**: 
-  - "Threshold slider can be finicky with gradients—investigate"
+- {notes from previous reviews, or "None"}
 ```
 
----
-
-## Reflection Phase
-
-Two separate agents operate on the completed trace. Separation ensures:
-- Different context requirements (Skill Reflector needs skill text; Trajectory Learner works better without anchoring on existing skills)
-- Different failure modes (each can be tuned independently)
-- Cleaner downstream (reflections update existing skills; new guidance creates new skills)
-
-Both agents output **free-form markdown** (not structured JSON) to preserve context cache.
-
----
-
-### Agent 1: Skill Reflector
-
-**Purpose**: Evaluate how retrieved skills impacted the trajectory.
-
-**Input**: 
-- Full trace
-- Skills that were retrieved during the run
-
-**Output**: For each skill, a reflection covering impact, reasoning, and feedback.
-
-#### Prompt
-
-```markdown
-## Reflect on the skills used in this trajectory
-
-During this task, the following skills were retrieved from the skillbook:
-
-{skills}
-
-Review each skill and evaluate how it impacted the trajectory.
-
-For each skill, assess:
-- **Followed**: Did the agent follow this skill's guidance? (yes | no | partially)
-- **Impact**: Did this skill help the agent succeed (positive), mislead or cause friction (negative), or have no meaningful effect (neutral)?
-- **Reason**: Why did it have this impact? Tie your explanation to what actually happened in the trace.
-- **Feedback**: What would make this skill better? Concrete suggestions. Write "none" if the skill worked well as-is.
-
-### Output Format
-
-For each skill:
-
-**Skill**: <skill identifier>
-**Followed**: yes | no | partially
-**Impact**: positive | negative | neutral
-**Reason**: <brief explanation tied to the trace>
-**Feedback**: <concrete suggestion, or "none">
-
----
-
-### Guidelines
-
-- **Be specific**: Reference what actually happened in the trace
-- **Be constructive**: Feedback should suggest improvements
-- **Judge impact by outcome**: 
-  - Positive = skill contributed to success
-  - Negative = skill caused confusion, errors, or wasted steps
-  - Neutral = skill had no meaningful effect (irrelevant to task, or agent already knew this)
-- **Include all skills**: Every retrieved skill needs a reflection
-
-If no skills were retrieved, write:
-
-No skills were used in this trajectory.
-```
-
-#### Example Output
-
-```markdown
-**Skill**: gimp/transparency
-**Followed**: yes
-**Impact**: positive
-**Reason**: Agent needed to make background transparent. Skill provided exact menu path. Agent followed it directly and succeeded on first attempt.
-**Feedback**: none
-
----
-
-**Skill**: libreoffice-calc/cell-selection
-**Followed**: yes
-**Impact**: negative
-**Reason**: Skill recommended Ctrl+G for range selection, but this opened "Go To" dialog instead of allowing range input. Agent had to close dialog and find alternative approach.
-**Feedback**: Ctrl+G behavior may differ across LibreOffice versions. Verify correct shortcut or provide version-specific guidance.
-
----
-
-**Skill**: chrome/permissions
-**Followed**: no
-**Impact**: neutral
-**Reason**: Skill was retrieved but task didn't require modifying permissions. Skill wasn't used.
-**Feedback**: Trigger context may be too broad—consider narrowing "situation" to avoid irrelevant retrieval.
-```
-
-#### Downstream Use
-
-- Metadata counts (positive/negative/neutral) updated programmatically
-- Reviews with feedback passed to Skillbook Manager
-
----
-
-### Agent 2: Trajectory Learner
-
-**Purpose**: Extract new guidance from the trajectory that could help a less capable agent.
-
-**Input**: Full trace only (no existing skills—avoids anchoring)
-
-**Output**: Free-form markdown with learnings separated by `---`
-
-#### Prompt
-
-```markdown
-## Reflect on this trajectory
-
-You have just completed a task. Review the trajectory above and extract any guidance that could help a less capable agent succeed in similar situations.
-
-Look for:
-1. **Friction moments**: Where did you struggle, retry, or take multiple attempts before succeeding? What knowledge would have helped you succeed faster?
-2. **Discovered knowledge**: Did you learn or notice anything useful that wasn't obvious beforehand?
-
-For each learning, write a section covering:
-- **What happened**: Brief factual description from the trace
-- **Source**: Was this a friction (struggled then succeeded) or discovered (noticed without struggling)?
-- **Why it matters**: What made it hard (friction) or how you discovered it
-- **Scope**: Where does this apply? (`general`, `os`, or application name like `gimp`, `chrome`)
-- **Situation**: When is this relevant? Describe the general context—not task-specific
-- **Guidance**: Clear, actionable instructions—what TO do, not what to avoid
-- **Confidence**: How certain are you? (low / medium / high)
-- **Steps wasted**: If friction, roughly how many actions were spent before resolution
-
-Separate each learning with `---`
-
-If there are no meaningful learnings from this trajectory, write:
-
-No learnings extracted.
-
-### Guidelines
-
-- **Be general**: Guidance should help with many tasks, not just this specific one
-- **Be positive**: Describe what to do, not what to avoid
-- **Be honest**: Only extract learnings where you're reasonably confident
-- **Be selective**: Not every trace has learnings—it's fine to extract nothing
-```
-
-#### Example Output
-
-```markdown
-**What happened**: Searched toolbox, Layer menu, and tried eraser tool over 7 actions before finding transparency feature in Filters menu
-
-**Source**: friction
-
-**Why it matters**: The feature is named "Color to Alpha" and located under Filters, not "transparency" in the toolbox where image manipulation tools are expected
-
-**Scope**: gimp
-
-**Situation**: Making colors or backgrounds transparent
-
-**Guidance**: Use Filters > Color > Color to Alpha. Select the target layer first, then choose the color to make transparent. Adjust threshold for rough edges. Export as PNG to preserve transparency.
-
-**Confidence**: high
-
-**Steps wasted**: 7
-
----
-
-**What happened**: Used address bar lock icon to access site permissions directly
-
-**Source**: discovered
-
-**Why it matters**: Found while adjusting camera permissions for video call—faster than navigating through settings
-
-**Scope**: chrome
-
-**Situation**: Viewing or modifying site-specific permissions
-
-**Guidance**: Click the lock/tune icon left of the URL, then select "Site settings". Changes apply immediately.
-
-**Confidence**: medium
-
-**Steps wasted**: n/a
-```
-
----
-
-## Skillbook Manager
-
-**Purpose**: Maintain a clean, accurate, and helpful skillbook by processing learnings and reviews one at a time.
-
-**Key Design**: Sequential processing with immediate application. Each call sees the updated skillbook state from previous calls.
-
-### Flow
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Input: Single learning OR single review                    │
-└─────────────────────────┬───────────────────────────────────┘
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Skillbook Manager                                          │
-│                                                             │
-│  Tools:                                                     │
-│  - fetch_similar_skills(domain, situation)                  │
-│  - read_skill(domain, skill_name)                           │
-│                                                             │
-│  Reasons about:                                             │
-│  - Is this covered by existing skill?                       │
-│  - Does this extend an existing skill?                      │
-│  - Is this new knowledge?                                   │
-│  - Is this contradicting existing guidance?                 │
-└─────────────────────────┬───────────────────────────────────┘
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Output: Structured decision                                │
-│  (create/update/annotate/delete/discard with content)       │
-└─────────────────────────┬───────────────────────────────────┘
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Programmatic: Apply action immediately                     │
-│  - Write/update/delete skill file                           │
-│  - Regenerate INDEX.md for domain                           │
-│  - Update metadata counts                                   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Tools
+### Skill Metadata (stored separately or in-memory)
 
 ```python
-fetch_similar_skills(domain: str, situation: str) -> str
+class SkillMetrics(BaseModel):
+    times_requested: int = 0
+    times_followed: float = 0  # Can be 0.5 for "partially"
+    positive_impact: int = 0
+    negative_impact: int = 0
+    neutral_impact: int = 0
+    
+    @property
+    def times_not_followed(self) -> float:
+        return self.times_requested - self.times_followed
 ```
-Find skills in the given domain related to the situation. Returns full content of top matches.
 
-```python
-read_skill(domain: str, skill_name: str) -> str
-```
-Read the full content of a specific skill.
+---
+
+## Trajectory Reflector
+
+Single unified reflector that outputs both skill reviews and new learnings.
 
 ### Output Schema
 
 ```python
-class CreateDecision(BaseModel):
-    """Decision to create a new skill."""
-    
-    action: Literal["create"] = "create"
-    source_material: str = Field(..., description="The learning/guidance this decision applies to")
-    reason: str = Field(..., description="Why a new skill should be created")
-    domain: str = Field(..., description="Domain for the new skill (e.g., 'gimp', 'os')")
-    skill_name: str = Field(..., description="Name for the new skill (e.g., 'color-to-alpha')")
-    skill_content: str = Field(..., description="Complete skill content in standard format")
+from pydantic import BaseModel, Field
+from typing import Literal
 
 
-class UpdateDecision(BaseModel):
-    """Decision to update an existing skill."""
-    
-    action: Literal["update"] = "update"
-    source_material: str = Field(..., description="The learning/review this decision applies to")
-    reason: str = Field(..., description="Why this skill should be updated")
-    target_skill: str = Field(..., description="Skill to update: 'domain/skill-name'")
-    skill_content: str = Field(..., description="Complete updated skill content")
+# === Skill Reviews ===
+
+class SkillPositive(BaseModel):
+    """Skill was followed and helped succeed."""
+    skill_id: str
+    followed: Literal["yes", "partially"]
+    impact: Literal["positive"] = "positive"
+    what_helped: str = Field(description="How the skill contributed to success")
 
 
-class AnnotateDecision(BaseModel):
-    """Decision to add an annotation to an existing skill."""
-    
-    action: Literal["annotate"] = "annotate"
-    source_material: str = Field(..., description="The learning/review this decision applies to")
-    reason: str = Field(..., description="Why an annotation is appropriate")
-    target_skill: str = Field(..., description="Skill to annotate: 'domain/skill-name'")
-    annotation: str = Field(..., description="The note to add for future review")
+class SkillNegative(BaseModel):
+    """Skill was followed but caused problems."""
+    skill_id: str
+    followed: Literal["yes", "partially"]
+    impact: Literal["negative"] = "negative"
+    issue_type: Literal["incorrect", "outdated", "incomplete", "unclear"]
+    what_went_wrong: str
+    corrected_guidance: str | None = Field(
+        default=None,
+        description="What actually worked, if discovered"
+    )
 
 
-class DeleteDecision(BaseModel):
-    """Decision to delete an existing skill."""
-    
-    action: Literal["delete"] = "delete"
-    source_material: str = Field(..., description="The review/feedback that triggered this deletion")
-    reason: str = Field(..., description="Why this skill should be removed")
-    target_skill: str = Field(..., description="Skill to delete: 'domain/skill-name'")
+class SkillNeutral(BaseModel):
+    """Skill was followed but had minimal effect."""
+    skill_id: str
+    followed: Literal["yes", "partially"]
+    impact: Literal["neutral"] = "neutral"
+    reason: Literal["already_knew", "not_needed", "marginal"]
+    suggested_improvement: str | None = Field(
+        default=None,
+        description="How the skill could be better"
+    )
 
 
-class DiscardDecision(BaseModel):
-    """Decision to discard a learning/review (no action needed)."""
-    
-    action: Literal["discard"] = "discard"
-    source_material: str = Field(..., description="The learning/review being discarded")
-    reason: str = Field(..., description="Why this should be discarded")
+class SkillNotFollowed(BaseModel):
+    """Skill was retrieved but not followed."""
+    skill_id: str
+    followed: Literal["no"] = "no"
+    reason: Literal["irrelevant", "already_knew", "chose_alternative", "seemed_wrong"]
+    explanation: str
+    alternative_used: str | None = Field(
+        default=None,
+        description="What approach was used instead"
+    )
 
 
-DecisionOutput = Union[CreateDecision, UpdateDecision, AnnotateDecision, DeleteDecision, DiscardDecision]
+SkillReview = SkillPositive | SkillNegative | SkillNeutral | SkillNotFollowed
+
+
+# === New Learnings ===
+
+class FrictionLearning(BaseModel):
+    """Knowledge from struggling before succeeding."""
+    type: Literal["friction"] = "friction"
+    scope: str = Field(description="'general', 'os', or application name")
+    situation: str = Field(description="When this applies (general, not task-specific)")
+    guidance: str = Field(description="Actionable instructions with exact paths/shortcuts")
+    confidence: Literal["low", "medium", "high"]
+    steps_wasted: int = Field(ge=1)
+
+
+class DiscoveredLearning(BaseModel):
+    """Knowledge discovered without struggling."""
+    type: Literal["discovered"] = "discovered"
+    scope: str
+    situation: str
+    guidance: str
+    confidence: Literal["low", "medium", "high"]
+
+
+Learning = FrictionLearning | DiscoveredLearning
+
+
+# === Unified Output ===
+
+class TrajectoryReflection(BaseModel):
+    skill_reviews: list[SkillReview] = Field(default_factory=list)
+    new_learnings: list[Learning] = Field(default_factory=list)
 ```
 
-### Prompt
+### Reflector Prompt
+
+```markdown
+## Reflect on this trajectory
+
+Review the trajectory you just completed and provide:
+1. **Skill Reviews** — feedback on each skill that was retrieved
+2. **New Learnings** — guidance that could help a less capable agent
+
+### Skills Retrieved
+
+{skills_section}
+
+Note: You already saw the full content of these skills during the task.
+
+---
+
+## Part 1: Skill Reviews
+
+Provide one review per skill listed above. If no skills were retrieved, return an empty list.
+
+Focus on:
+- Did following (or not following) the skill help or hurt?
+- Was the guidance accurate and complete?
+- What concrete improvement would make this skill better?
+
+---
+
+## Part 2: New Learnings
+
+Extract guidance from:
+- **Friction moments**: Where you struggled, retried, or wasted steps before succeeding
+- **Discoveries**: Useful knowledge you noticed that wasn't obvious beforehand
+
+**Worth extracting:**
+- Non-obvious UI locations (menus, settings, hidden features)
+- Keyboard shortcuts or faster workflows
+- Gotchas or prerequisites that aren't intuitive
+- Correct sequence of steps when order matters
+
+**Not worth extracting:**
+- Basic computer knowledge (clicking, scrolling, typing)
+- Task-specific details that won't generalize
+- Knowledge already covered by a retrieved skill (give feedback instead)
+
+---
+
+## Guidelines
+
+- **Empty is fine**: Not every trajectory has learnings
+- **Be general**: Guidance should help with many tasks
+- **Be concrete**: Include exact menu paths, shortcuts, UI elements
+- **Avoid duplicates**: Improve existing skills via feedback rather than creating new learnings
+```
+
+---
+
+## Programmatic Review Handler
+
+Handles metrics updates and filters what goes to the Skill Manager.
+
+```python
+class SkillLearner:
+    def __init__(self, skill_book: SkillBook):
+        self.skill_book = skill_book
+
+    def learn(self, reviews: list[SkillReview], learnings: list[Learning]):
+        # Process reviews, filter those needing agent attention
+        reviews_to_process = [
+            r for r in (self.manage_skill_review(review) for review in reviews)
+            if r is not None
+        ]
+        
+        # Pass to skill manager agent
+        for review in reviews_to_process:
+            self.skill_manager.process(review.model_dump())
+        
+        for learning in learnings:
+            self.skill_manager.process(learning.model_dump())
+
+    def manage_skill_review(self, review: SkillReview) -> SkillReview | None:
+        """
+        Updates metrics. Returns review if agent should process it.
+        """
+        skill = self.skill_book.get_skill(review.skill_id)
+        skill.metrics.times_requested += 1
+
+        if isinstance(review, SkillPositive):
+            skill.metrics.positive_impact += 1
+            skill.metrics.times_followed += 1
+            return None  # No agent needed
+
+        elif isinstance(review, SkillNeutral):
+            skill.metrics.neutral_impact += 1
+            skill.metrics.times_followed += 1 if review.followed == "yes" else 0.5
+            if review.suggested_improvement is not None:
+                return review  # Agent should evaluate improvement
+            return None
+
+        elif isinstance(review, SkillNegative):
+            skill.metrics.negative_impact += 1
+            skill.metrics.times_followed += 1 if review.followed == "yes" else 0.5
+            if review.corrected_guidance is not None:
+                return review  # Agent should update skill
+            else:
+                # No correction provided, just annotate
+                skill.annotate(f"[{review.issue_type}] {review.what_went_wrong}")
+                return None
+
+        elif isinstance(review, SkillNotFollowed):
+            if review.reason == "seemed_wrong":
+                return review  # Agent should investigate
+            if review.reason == "chose_alternative":
+                skill.annotate(f"[{review.reason}] {review.explanation}")
+                if review.alternative_used:
+                    skill.annotate(f"[alternative] {review.alternative_used}")
+            return None
+
+        return None
+```
+
+### What Gets Passed to Skill Manager
+
+| Review Type | Condition | Passed to Agent? |
+|-------------|-----------|------------------|
+| SkillPositive | Always | ❌ No |
+| SkillNeutral | No suggestion | ❌ No |
+| SkillNeutral | Has suggestion | ✅ Yes |
+| SkillNegative | No corrected_guidance | ❌ No (annotated) |
+| SkillNegative | Has corrected_guidance | ✅ Yes |
+| SkillNotFollowed | irrelevant, already_knew | ❌ No |
+| SkillNotFollowed | chose_alternative | ❌ No (annotated) |
+| SkillNotFollowed | seemed_wrong | ✅ Yes |
+| Learning | Always | ✅ Yes |
+
+---
+
+## Skill Manager Agent
+
+Processes reviews and learnings one at a time using tools.
+
+### Tools
+
+```python
+def get_tools(self) -> list[dict]:
+    return [
+        {
+            "name": "fetch_similar_skills",
+            "description": "Find related skills across all domains.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "situation": {
+                        "type": "string",
+                        "description": "Situation to match against"
+                    }
+                },
+                "required": ["situation"]
+            }
+        },
+        {
+            "name": "read_skills",
+            "description": "Read specific skills with full content, annotations, and metrics.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Skill IDs to read"
+                    }
+                },
+                "required": ["skill_ids"]
+            }
+        },
+        {
+            "name": "create_domain",
+            "description": "Create a new domain for an application.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {"type": "string"},
+                    "description": {"type": "string"}
+                },
+                "required": ["domain", "description"]
+            }
+        },
+        {
+            "name": "create_skill",
+            "description": "Create a new skill.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {"type": "string"},
+                    "skill_name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "situation": {"type": "string"},
+                    "guidance": {"type": "string"}
+                },
+                "required": ["domain", "skill_name", "description", "situation", "guidance"]
+            }
+        },
+        {
+            "name": "update_skill",
+            "description": "Update an existing skill. Only provide fields to change.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_id": {"type": "string"},
+                    "description": {"type": "string"},
+                    "situation": {"type": "string"},
+                    "guidance": {"type": "string"}
+                },
+                "required": ["skill_id"]
+            }
+        },
+        {
+            "name": "merge_skills",
+            "description": "Combine two overlapping skills. Source is deleted.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source_skill_id": {"type": "string"},
+                    "target_skill_id": {"type": "string"},
+                    "description": {"type": "string"},
+                    "situation": {"type": "string"},
+                    "guidance": {"type": "string"}
+                },
+                "required": ["source_skill_id", "target_skill_id", "description", "situation", "guidance"]
+            }
+        },
+        {
+            "name": "annotate_skill",
+            "description": "Add a note for future review.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_id": {"type": "string"},
+                    "annotation": {"type": "string"}
+                },
+                "required": ["skill_id", "annotation"]
+            }
+        },
+        {
+            "name": "delete_skill",
+            "description": "Remove a skill. Use sparingly.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_id": {"type": "string"}
+                },
+                "required": ["skill_id"]
+            }
+        }
+    ]
+```
+
+### System Prompt
 
 ```markdown
 ## Skillbook Manager
 
-You are the Skillbook Manager. Your job is to decide what action to take based on a single incoming learning or skill review, and output the complete result.
+You maintain a skillbook that helps less capable agents succeed at computer use tasks. You receive learnings and reviews one at a time, and decide what action (if any) to take.
+
+---
 
 ### Input Types
 
-**Learning** (from Trajectory Learner):
-New guidance extracted from an agent run. Contains what happened, scope, situation, guidance, and confidence.
+**Learning**: New guidance extracted from a trajectory.
+- `type`: "friction" or "discovered"
+- `scope`: Application name or "general"/"os"
+- `situation`: When this guidance applies
+- `guidance`: The actionable instructions
+- `confidence`: "low" | "medium" | "high"
+- `steps_wasted`: (friction only) How many actions wasted
 
-**Review** (from Skill Reflector):
-Feedback on an existing skill. Contains the skill ID, whether it was followed, impact (positive/negative/neutral), and suggestions.
+**SkillNegative**: Skill was followed but caused problems. Includes corrected guidance.
+- `skill_id`: The skill that was used
+- `issue_type`: "incorrect" | "outdated" | "incomplete" | "unclear"
+- `what_went_wrong`: What specifically failed
+- `corrected_guidance`: What actually worked
 
-### Your Task
+**SkillNeutral**: Skill was followed but had minimal effect.
+- `skill_id`: The skill that was used
+- `suggested_improvement`: How the skill could be better
 
-1. Identify the scope/domain and situation from the input
-2. Use `fetch_similar_skills(domain, situation)` to find related skills
-3. If reviewing a specific skill, use `read_skill(domain, skill_name)` to see its current content
-4. Decide the appropriate action and provide complete output
+**SkillNotFollowed**: Skill was retrieved but agent didn't trust it.
+- `skill_id`: The skill that was retrieved
+- `reason`: "seemed_wrong"
+- `explanation`: Why the agent didn't trust it
+- `alternative_used`: (optional) What approach was used instead
+
+---
+
+### Tools
+
+**Reading:**
+- `fetch_similar_skills(situation)` — Searches across all domains
+- `read_skills(skill_ids)` — Returns skills with content, annotations, metrics
+
+**Writing:**
+- `create_domain(domain, description)`
+- `create_skill(domain, skill_name, description, situation, guidance)`
+- `update_skill(skill_id, description?, situation?, guidance?)`
+- `merge_skills(source_skill_id, target_skill_id, description, situation, guidance)`
+- `annotate_skill(skill_id, annotation)`
+- `delete_skill(skill_id)`
+
+---
+
+### Process
+
+1. **Explore** (optional) — Use read tools to understand current state
+2. **Decide** — Determine what action (if any) is needed
+3. **Act** — Call at most ONE write tool, or take no action
+
+Read tools can be called multiple times. Write tools only once per input.
+
+---
 
 ### Decision Guidelines
 
-**create** — when:
-- New knowledge that no existing skill covers
-- High or medium confidence
-- Clearly actionable guidance
-- Output: complete skill content in standard format
+**For Learnings:**
 
-**update** — when:
-- Learning extends or improves an existing skill
-- Review feedback points to a concrete fix
-- High confidence that the change is correct
-- Output: complete updated skill content
+| Condition | Action |
+|-----------|--------|
+| No similar skill + confidence ≥ medium | `create_skill` |
+| Similar skill exists + learning extends it | `update_skill` |
+| Two skills overlap + learning bridges them | `merge_skills` |
+| Low confidence | `annotate_skill` or no action |
+| Guidance is basic | No action |
+| Scope is new domain | `create_domain` then `create_skill` |
 
-**annotate** — when:
-- Uncertain if change is needed
-- Low confidence learning
-- Feedback suggests possible issue but needs verification
-- Output: annotation text only
+**For SkillNegative:**
 
-**delete** — when:
-- Skill is clearly harmful (consistent negative reviews)
-- Skill is obsolete or consistently wrong
-- Use sparingly—prefer annotate if uncertain
+| Condition | Action |
+|-----------|--------|
+| Correction is clear | `update_skill` |
+| Conflicts with existing annotations | `annotate_skill` |
+| Skill has many negatives | Consider `delete_skill` |
 
-**discard** — when:
-- Learning is already fully covered by existing skill
-- Too low confidence to act on
-- Not actionable (vague, unclear)
-- Review has no feedback and positive/neutral impact
+**For SkillNeutral:**
 
-### Skill Format
+| Condition | Action |
+|-----------|--------|
+| Improvement is concrete | `update_skill` |
+| Improvement is minor | `annotate_skill` |
 
-When creating or updating skills, use this format:
+**For SkillNotFollowed:**
 
-```markdown
-# {Skill Title}
+| Condition | Action |
+|-----------|--------|
+| `alternative_used` is clearly better | `update_skill` |
+| Unclear if better | `annotate_skill` |
+| No `alternative_used` | `annotate_skill` |
 
-## Trigger
-- **Scope**: {domain}
-- **Situation**: {when this applies}
+---
 
-## Guidance
+### Using Annotations
 
-{Clear, actionable instructions with steps}
+- **Multiple similar complaints** → Pattern confirmed, safe to update
+- **Conflicting information** → Be conservative, annotate
+- **No annotations + first report** → Annotate, don't update yet
 
-## Metadata
-- **Positive**: 0
-- **Negative**: 0
-- **Neutral**: 0
-- **Last validated**: {date}
-- **Annotations**: []
-```
+---
+
+### What Makes Good Guidance
+
+**Worth storing:**
+- Non-obvious menu locations
+- Specific shortcuts that differ from expected
+- Required prerequisites
+- Correct sequences when order matters
+
+**Not worth storing:**
+- Basic knowledge (Ctrl+C, clicking buttons)
+- Vague guidance
+- Task-specific details
+
+---
 
 ### Principles
 
-- **Be conservative**: When uncertain, annotate rather than update or delete
-- **Avoid duplicates**: Check similar skills carefully before creating
-- **Preserve knowledge**: Prefer update over delete when possible
-- **Be concise**: Skills should be actionable, not verbose
+- **One write action per input**
+- **Explore first** — check similar skills before creating
+- **Conservative when uncertain** — annotate rather than update
+- **Patterns matter** — multiple reports justify action
+- **Concrete only** — don't store vague guidance
+- **Preserve knowledge** — prefer update/merge over delete
 ```
 
 ---
 
-## Programmatic Steps
+## Periodic Cleanup
 
-### After Each Skillbook Manager Decision
+Runs periodically (e.g., every N trajectories) to maintain skillbook health.
+
+### Cleanup Criteria
 
 ```python
-def apply_decision(decision: DecisionOutput):
-    if isinstance(decision, CreateDecision):
-        # Write new skill file
-        write_file(f"skillbook/{decision.domain}/{decision.skill_name}.md", decision.skill_content)
-        # Regenerate index
-        regenerate_index(decision.domain)
-        
-    elif isinstance(decision, UpdateDecision):
-        domain, skill_name = decision.target_skill.split("/")
-        # Overwrite skill file
-        write_file(f"skillbook/{domain}/{skill_name}.md", decision.skill_content)
-        # Regenerate index
-        regenerate_index(domain)
-        
-    elif isinstance(decision, AnnotateDecision):
-        domain, skill_name = decision.target_skill.split("/")
-        # Append annotation to skill metadata
-        append_annotation(f"skillbook/{domain}/{skill_name}.md", decision.annotation)
-        
-    elif isinstance(decision, DeleteDecision):
-        domain, skill_name = decision.target_skill.split("/")
-        # Delete skill file
-        delete_file(f"skillbook/{domain}/{skill_name}.md")
-        # Regenerate index
-        regenerate_index(domain)
-        
-    elif isinstance(decision, DiscardDecision):
-        # Log reason, no action
-        log_discard(decision.source_material, decision.reason)
+@dataclass
+class CleanupConfig:
+    # Negative-heavy skills
+    negative_threshold: int = 3
+    positive_ratio_threshold: float = 0.3  # < 30% positive
+    
+    # Duplicate detection
+    similarity_threshold: float = 0.85
+    
+    # Low follow-rate skills
+    min_requests_for_follow_rate: int = 5
+    follow_rate_threshold: float = 0.3  # < 30% followed
 ```
 
-### Index Regeneration
+### Cleanup Tasks
 
 ```python
-def regenerate_index(domain: str):
-    skills = []
-    for file in glob(f"skillbook/{domain}/*.md"):
-        if file.endswith("INDEX.md"):
-            continue
-        content = read_file(file)
-        skill_name = extract_skill_name(file)
-        situation = extract_situation(content)
-        skills.append((skill_name, situation))
+class SkillbookCleaner:
+    def find_negative_heavy_skills(self) -> list[dict]:
+        """Skills with high negative impact and low positive ratio."""
+        ...
     
-    index_content = generate_index_markdown(domain, skills)
-    write_file(f"skillbook/{domain}/INDEX.md", index_content)
+    def find_duplicate_candidates(self) -> list[dict]:
+        """Pairs of skills with high similarity within a domain."""
+        ...
+    
+    def find_low_follow_rate_skills(self) -> list[dict]:
+        """Skills retrieved often but rarely followed."""
+        ...
 ```
 
-### Metadata Updates (from Skill Reflector)
+### Cleanup Task Types for Skill Manager
 
-```python
-def update_skill_metadata(skill_id: str, impact: str):
-    domain, skill_name = skill_id.split("/")
-    skill_path = f"skillbook/{domain}/{skill_name}.md"
-    
-    # Increment appropriate counter
-    if impact == "positive":
-        increment_metadata(skill_path, "Positive")
-    elif impact == "negative":
-        increment_metadata(skill_path, "Negative")
-    elif impact == "neutral":
-        increment_metadata(skill_path, "Neutral")
-    
-    update_last_validated(skill_path)
+```markdown
+**CleanupTask**: Maintenance task for problematic skills.
+- `cleanup_type`: "negative_heavy" | "duplicates" | "low_follow_rate"
+- `skill_id` or `skill_ids`: Skills to evaluate
+- `context`: Metrics, annotations, similarity scores
+
+**For `negative_heavy`:**
+- If pattern is clear and fixable → `update_skill`
+- If fundamentally flawed → `delete_skill`
+- If unclear → `annotate_skill`
+
+**For `duplicates`:**
+- If truly overlapping → `merge_skills`
+- If distinct use cases → No action
+
+**For `low_follow_rate`:**
+- Too broad? → `update_skill` to narrow situation
+- Too obvious? → `delete_skill`
+- Seems wrong? → Review annotations, consider update/delete
 ```
 
 ---
 
-## Signals for Identifying Learnable Moments
+## Summary
 
-Since there's no explicit success/failure feedback, the Trajectory Learner uses heuristics:
+| Component | Responsibility |
+|-----------|---------------|
+| **Computer Use Agent** | Runs tasks, requests skills at runtime |
+| **Trajectory Reflector** | Reviews skills + extracts learnings (structured output) |
+| **Programmatic Handler** | Updates metrics, filters what needs agent processing |
+| **Skill Manager Agent** | Creates/updates/merges/annotates/deletes skills |
+| **Periodic Cleanup** | Flags problematic skills for Skill Manager |
 
-| Signal | Indicates |
-|--------|-----------|
-| Agent retried an action multiple times | Friction—probably a better way exists |
-| Agent scrolled/searched extensively | Missing knowledge about locations |
-| Agent corrected itself mid-trace | Learned something that could be known upfront |
-| Agent took a circuitous path | Workflow optimization opportunity |
+### What's Programmatic vs Agent
 
----
-
-## Why Sequential Processing
-
-The Skillbook Manager processes learnings/reviews one at a time with immediate application:
-
-1. **Simpler reasoning** — Manager focuses on one decision
-2. **Self-correcting** — If Learning 1 creates a skill, Learning 2 sees it and can update instead of duplicate
-3. **Easier debugging** — Trace each decision independently
-4. **Graceful failure** — One bad decision doesn't break everything
-5. **Skillbook consistency** — Each call sees current state
+| Task | Handler |
+|------|---------|
+| Increment metrics | Programmatic |
+| Annotate (no decision needed) | Programmatic |
+| Delete obvious skills | Could be programmatic with thresholds |
+| Create/update/merge skills | Agent |
+| Evaluate conflicting info | Agent |
+| Decide if learning is worth storing | Agent |

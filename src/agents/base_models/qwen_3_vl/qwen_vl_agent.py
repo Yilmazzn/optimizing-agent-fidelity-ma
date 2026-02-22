@@ -33,7 +33,7 @@ class QwenAgent(Agent):
         self, 
         **kwargs
     ) -> None:
-        super().__init__(name="qwen3-vl-32b-thinking", **kwargs)
+        super().__init__(name="qwen3-vl", **kwargs)
 
         # qwen 3 vl trained on 1000x1000 coordinate system
         self.computer_use_tool = ComputerUse(
@@ -45,7 +45,7 @@ class QwenAgent(Agent):
 
         self.image_size = (1000, 1000) # for rescaling coordinates (dont scale image before)
     
-        self.inference_model = "qwen/qwen3-vl-32b-instruct" # TODO change this to thinking after tests
+        self.inference_model = "qwen/qwen3-vl-235b-a22b-thinking" # TODO change this to thinking after tests
         self.system_prompt = QWEN_SYSTEM_PROMPT
         
         self.client = openai.OpenAI(
@@ -158,12 +158,12 @@ class QwenAgent(Agent):
                     "image_url": {"url": f"data:image/jpeg;base64,{self.history[i]['screenshot']}"},
                 })
             if i == 0:
-                user_content.append({"type": "text", "text": task})
+                user_content.append({"type": "text", "text": f"/think {task}"})
             else: 
                 tool_result = self.history[i-1].get("tool_result", None)
                 user_content.append({
                     "type": "text",
-                    "text": f"<tool_result>\n{tool_result}\n</tool_result>",
+                    "text": tool_result,
                 })
 
             messages.append({
@@ -183,6 +183,9 @@ class QwenAgent(Agent):
         # make API call
         result = self._make_call(messages=messages)
         output_text = result.choices[0].message.content
+        model_reasoning = result.choices[0].message.model_extra["reasoning"]
+        agent_response = f"Model Reasoning:\n{model_reasoning}\n\n---\n\n{output_text}"
+        
         cached_tokens = 0
         if hasattr(result.usage, "prompt_tokens_details") and hasattr(result.usage.prompt_tokens_details, "cached_tokens"):
             cached_tokens = result.usage.prompt_tokens_details.cached_tokens
@@ -202,7 +205,7 @@ class QwenAgent(Agent):
             return AgentPredictionResponse(
                 pyautogui_actions="FAIL",
                 usage=token_usage,
-                response=output_text + "\nFailed to parse tool_call JSON.",
+                response=agent_response + "\nFailed to parse tool_call JSON.",
                 status="fail"
             )
         
@@ -231,7 +234,7 @@ class QwenAgent(Agent):
             return AgentPredictionResponse(
                 pyautogui_actions="FAIL",
                 usage=token_usage,
-                response=output_text + f"\nFailed to perform tool call: {str(e)}",
+                response=agent_response + f"\n\nFailed to perform tool call: {str(e)}",
                 status="fail"
             )
         pyautogui_actions = "\n\n".join(pyautogui_actions)
@@ -240,14 +243,14 @@ class QwenAgent(Agent):
         
         tool_results_str = []
         for action in actions:
-            tool_results_str.append(f"Called {action['name']} with arguments {action['arguments']}")
+            tool_results_str.append(f"<tool_result>\nCalled {action['name']} with arguments {action['arguments']}\n</tool_result>")
         self.history[-1]["tool_result"] = "\n".join(tool_results_str)
 
 
         return AgentPredictionResponse(
             pyautogui_actions=pyautogui_actions,
             usage=token_usage,
-            response=output_text
+            response=agent_response
         )
 
 

@@ -5,13 +5,12 @@ from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 from agents.grounders.qwen3_vl import Qwen3VLGrounder
 from agents.hybrid.agent import Custom3Agent
-from agents.hybrid.skill_agent_2.skill_book import SkillBook
+from agents.hybrid.skill_agent_2.skill_agent_prompt import build_skill_agent_prompt
+from agents.hybrid.skill_agent_2.skill_book import SkillBook, SkillFetchError
 from agents.hybrid.skill_agent_2.reflector import SkillsReflector
 from agents.hybrid.skill_agent_2.skill_manager import SkillManager
-import asyncio
 
 from agents.hybrid.tools import CuaToolSet
-from domain.request import TokenUsage
 
 class SkillTools(CuaToolSet):
     def __init__(self, vm_http_server: str, skill_book: SkillBook):
@@ -25,8 +24,25 @@ class SkillTools(CuaToolSet):
         self.tools = self.tools + [
             {
                 "type": "function",
+                "name": "get_domain_skills",
+                "description": "Get the list of available skills for a specific domain/application. Call this at the beginning of a task to discover what guidance is available. Returns skill IDs and descriptions for the domain.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "domain": {
+                            "type": "string",
+                            "enum": self.skill_book.get_domain_ids(),
+                            "description": "The domain/application name (e.g. 'chrome', 'gimp', 'libreoffice-calc')."
+                        },
+                    },
+                    "required": ["domain"],
+                    "additionalProperties": False
+                }
+            },
+            {
+                "type": "function",
                 "name": "read_skills",
-                "description": "Read the full content of the specific skills. Use this to see current content before updating.",
+                "description": "Read the full content of specific skills. Use this after calling get_domain_skills to read the detailed guidance for skills you need.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -36,7 +52,7 @@ class SkillTools(CuaToolSet):
                                 "type": "string",
                                 "enum": self.skill_book.get_all_skill_ids()
                             },
-                            "description": "The list of skill IDs to read (e.g. ['libreoffice-calc/select-cells', 'gimp/transparency'])."
+                            "description": "The list of skill IDs to read (e.g. ['chrome/bookmarks-manager', 'gimp/transparency']). Get valid IDs from get_domain_skills first."
                         },
                     },
                     "required": ["skill_ids"],
@@ -50,8 +66,21 @@ class SkillTools(CuaToolSet):
         name = tool_call.name
         args = json.loads(tool_call.arguments)
 
-        if name == "read_skills":
+        logger.info(f"SkillTools parsing action: {name} with args: \n{json.dumps(args, indent=2, ensure_ascii=False)}")
+
+        if name == "get_domain_skills":
+            domain = args["domain"]
+            try:
+                domain_obj = self.skill_book.get_domain(domain)
+                skill_list = domain_obj.list_skills()
+                tool_result = f"# Skills available in domain '{domain}':\n\n{skill_list}\n\nUse `read_skills` with the skill IDs above to get detailed guidance."
+                return tool_result, "", (0, 0), True
+            except Exception as e:
+                return f"Error: {str(e)}", "", (0, 0), True
+        elif name == "read_skills":
             skill_ids = args["skill_ids"]
+            if len(skill_ids) > 10:
+                raise SkillFetchError(f"Too many skills requested: {len(skill_ids)}. Maximum at a time is 10.")
             self.requested_skill_ids.update(skill_ids)
             skills_content = []
             for skill_id in skill_ids:
@@ -68,13 +97,14 @@ class SkillTools(CuaToolSet):
 
 class SkillAgent2(Custom3Agent):
     """Hybrid with coding tools + skill management"""
-    def __init__(self, vm_http_server: str, name: str = "skill-agent-2"):
-        super().__init__(name=name, vm_http_server=vm_http_server)
+    def __init__(self, vm_http_server: str, name: str = "skill-agent-2", disable_learning: bool = False, model = None):
+        super().__init__(name=name, vm_http_server=vm_http_server, model=model)
         self.skill_book = SkillBook.load()
         self.skill_manager = SkillManager(skill_book=self.skill_book)
         self.reflector = SkillsReflector(skill_book=self.skill_book)
         self.tool_set = SkillTools(vm_http_server=vm_http_server, skill_book=self.skill_book)
-
+        self.system_prompt = build_skill_agent_prompt(self.skill_book.get_domain_ids())
+        self.disable_learning = disable_learning
 
     @retry(
        reraise=True,
@@ -106,29 +136,35 @@ class SkillAgent2(Custom3Agent):
     def _learn(self) -> dict:
         reflection, token_usage = self.reflector.reflect(self.last_response_id, self.tool_set.get_requested_skill_ids())
         skill_manager_history = self.skill_manager.learn(reviews=reflection.skill_reviews, learnings=reflection.new_learnings)
-        
+        cleanup_log = self.skill_manager.cleanup()
         learning_log = {
             "reflection": {
-                "reflections": json.dumps(json.loads(reflection.model_dump_json(indent=4)), indent=4, ensure_ascii=False),
-                "token_usage": json.dumps(json.loads(token_usage.model_dump_json(indent=4)), indent=4, ensure_ascii=False),
+                "reflections": reflection.model_dump(),
+                "token_usage": token_usage.model_dump(),
             },
             "skill_manager_history": skill_manager_history,
+            "cleanup_log": cleanup_log,
         }
         return learning_log
 
     def end_task(self, task_id: str) -> None:
+        if self.disable_learning:
+            logger.warning("Learning is disabled. Skipping end_task operations.")
+            return
         self._remove_screenshots_from_history(remove_all=True)
         self._make_checkpoint()
 
         learning_log = self._learn()
         learning_log["task_id"] = task_id
 
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
         self.skill_book.save()
+        self.skill_book.save(location=f".skill-backups/{timestamp}", omit_embeddings=True)
 
         # persist learning log
         log_dir = ".learning_logs"
         os.makedirs(log_dir, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         log_path = os.path.join(log_dir, f"{timestamp}.json")
         with open(log_path, "w", encoding="utf-8") as f:
             json.dump(learning_log, f, indent=4, ensure_ascii=False)

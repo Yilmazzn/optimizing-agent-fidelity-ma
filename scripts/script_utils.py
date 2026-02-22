@@ -7,10 +7,29 @@ from loguru import logger
 EVALUATION_EXAMPLES = r"D:\Projects\OSWorld-MA\evaluation_examples\examples"
 RESULT_BASE_DIR = r"D:\Projects\OSWorld-MA\results\pyautogui\screenshot"
 
+TRAIN_SET_PATH = r"d:\Projects\OSWorld-MA\evaluation_examples\test_skill_train.json"
+EVAL_SET_PATH = r"d:\Projects\OSWorld-MA\evaluation_examples\test_skill_eval.json"
+
 with open(r"D:\Projects\OSWorld-MA\evaluation_examples\test_nogdrive.json", "r") as f:
     _ground_truth = json.load(f)
 
-def get_tasks(model: str, remove_corrupted: bool = False):
+with open(TRAIN_SET_PATH, "r") as f:
+    _train_set = json.load(f)
+
+with open(EVAL_SET_PATH, "r") as f:
+    _eval_set = json.load(f)
+
+def get_tasks(model: str, remove_corrupted: bool = False, dataset: str | None = None):
+    if dataset is not None:
+        if dataset == "train":
+            _subset = _train_set
+        elif dataset == "test":
+            _subset = _eval_set
+        else:
+            raise ValueError(f"Unknown dataset: {dataset}. Must be 'train', 'test', or None.")
+    else:
+        _subset = None
+
     _results_dir = os.path.join(RESULT_BASE_DIR, model)
     tasks = []
     for domain_dir in Path(_results_dir).iterdir():
@@ -19,6 +38,11 @@ def get_tasks(model: str, remove_corrupted: bool = False):
         domain = domain_dir.name
         for task_dir in domain_dir.iterdir():
             task_id = task_dir.name
+
+            # filter by dataset subset if specified
+            if _subset is not None:
+                if domain not in _subset or task_id not in _subset[domain]:
+                    continue
             
             # read results.json from summary/results.json
             results_file = task_dir / "summary" / "results.json"

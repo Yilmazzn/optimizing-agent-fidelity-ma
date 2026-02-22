@@ -3,6 +3,8 @@ logs/
 **/.skills-archive/**
 **/.learning_logs/**
 **/.skills/**
+**/.skill-backups/**
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

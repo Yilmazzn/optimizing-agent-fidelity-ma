@@ -9,6 +9,11 @@ from loguru import logger
 from utils import VIEWPORT_SIZE
 
 
+class GroundingError(Exception):
+    """Raised when the grounder cannot extract coordinates from the LLM response."""
+    pass
+
+
 class Grounder(abc.ABC):
     def __init__(self, image_size: Tuple[int, int] = None, action_space_size: Tuple[int, int] = None):
         self.image_size = image_size if image_size else VIEWPORT_SIZE

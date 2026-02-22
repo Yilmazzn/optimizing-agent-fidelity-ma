@@ -24,6 +24,7 @@ class Custom1Agent(Agent):
         super().__init__(name=name, max_images_in_history=max_images_in_history)
 
         self.grounding_model = "Qwen/Qwen3-VL-32B-Instruct"
+        self.model = "gpt-5.2"
         self.planner_client = get_openai_client()
         self.tool_set = CuaToolSet(
             grounder=Qwen3VLGrounder(model=self.grounding_model),
@@ -90,7 +91,7 @@ class Custom1Agent(Agent):
     def _generate_plan(self) -> Tuple[str, list]:
 
         response = self.planner_client.responses.create(
-            model="gpt-5.2",
+            model=self.model,
             # instructions=instructions,
             tools=self.tool_set.tools,
             reasoning={
@@ -224,6 +225,8 @@ class Custom2Agent(Custom1Agent):
 class Custom3Agent(Custom2Agent):
     """ same custom-2, with max 10 screenshots in memory """
 
-    def __init__(self, vm_http_server: str, max_images_in_history: int = 5, name: str = "custom-3"):
+    def __init__(self, vm_http_server: str, max_images_in_history: int = 5, name: str = "custom-3", model: str = "gpt-5.2"):
         super().__init__(name=name, vm_http_server=vm_http_server, max_images_in_history=5)
+        self.model = model
+
 

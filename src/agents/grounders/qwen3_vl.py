@@ -1,7 +1,7 @@
 import json
 import openai
 from tenacity import retry, stop_after_attempt, wait_exponential
-from agents.grounders.grounder import Grounder
+from agents.grounders.grounder import Grounder, GroundingError
 from utils import convert_to_base64_image_url, expect_env_var
 
 _QWEN3_VL_ACTION_SPACE_SIZE = (1000, 1000)
@@ -24,7 +24,7 @@ Output: 'I see the blue "Submit" button at coordinates (450, 300)'.
 """
 
 class Qwen3VLGrounder(Grounder):
-    def __init__(self, model: str = "qwen/qwen3-vl-32b-instruct"):
+    def __init__(self, model: str = "qwen/qwen3-vl-235b-a22b-instruct"):
         super().__init__(action_space_size=_QWEN3_VL_ACTION_SPACE_SIZE)
         self.model = model
         self.client = openai.OpenAI(
@@ -35,7 +35,7 @@ class Qwen3VLGrounder(Grounder):
     @retry(
        reraise=True,
        stop=stop_after_attempt(4),
-       wait=wait_exponential(multiplier=2.0, min=1.0, max=60.0),
+       wait=wait_exponential(multiplier=3.0, min=1.0, max=60.0),
     )
     def _make_call(self, messages: list):
         response = self.client.chat.completions.create(
@@ -81,7 +81,7 @@ class Qwen3VLGrounder(Grounder):
             y = int(match.group(2))
             return (x, y)
         else:
-            raise ValueError("No coordinates found in the response.")
+            raise GroundingError(text)
     
     def _locate_ui_element_coords_raw(self, screenshot: str, ui_element: str) -> tuple[int, int]:
         messages = [
@@ -104,8 +104,8 @@ class Qwen3VLGrounder(Grounder):
             }
         ]
         response = self._make_call(messages)
-        usage = (response.usage.prompt_tokens, response.usage.completion_tokens)
         text = response.choices[0].message.content
+        usage = (response.usage.prompt_tokens, response.usage.completion_tokens)
         coords = self._extract_coords_from_response(text)
         return coords, usage
     
