@@ -4,6 +4,7 @@ logs/
 **/.learning_logs/**
 **/.skills/**
 **/.skill-backups/**
+.claude/
 
 
 # Byte-compiled / optimized / DLL files

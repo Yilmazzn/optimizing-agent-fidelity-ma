@@ -1,5 +1,10 @@
+import json
+import traceback
 from typing import Union, List, Iterable, Sequence
 
+from loguru import logger
+import requests
+from tenacity import retry, stop_after_attempt, wait_exponential
 from qwen_agent.tools.base import BaseTool, register_tool
 
 # https://github.com/QwenLM/Qwen3-VL/blob/main/cookbooks/utils/agent_function_call.py
@@ -19,7 +24,7 @@ Use a mouse and keyboard to interact with a computer, and take screenshots.
 * Whenever you intend to move the cursor to click on an element like an icon, you should consult a screenshot to determine the coordinates of the element before moving the cursor.
 * If you tried clicking on a program or link but it failed to load, even after waiting, try adjusting your cursor position so that the tip of the cursor visually falls on the element that you want to click.
 * Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges.
-* Don't answer explicitly. Just terminate the task if finished with either success or failure.
+* Don't answer explicitly. Just terminate the task if finished with either success, failure or infeasible.
 """.strip()
 
     parameters = {
@@ -263,3 +268,183 @@ The action to perform. The available actions are:
         if status.lower().strip() == "success":
             return "DONE"
         return "FAIL"
+
+
+@register_tool("get_domain_skills")
+class GetDomainSkills(BaseTool):
+    description = (
+        "**CALL THIS FIRST on every new task!** Discovers available skills for a domain/application. "
+        "Returns skill IDs and descriptions. This reveals what proven guidance exists from past agents. "
+        "Always call this before taking actions in any application."
+    )
+
+    parameters = {
+        "type": "object",
+        "properties": {
+            "domain": {
+                "type": "string",
+                "description": "The domain/application name (e.g. 'chrome', 'gimp', 'libreoffice-calc'). Check ALL relevant domains.",
+            }
+        },
+        "required": ["domain"],
+    }
+
+    def __init__(self, cfg=None):
+        self.skill_book = cfg["skill_book"]
+        super().__init__(cfg)
+
+    def call(self, params: Union[str, dict], **kwargs) -> str:
+        params = self._verify_json_format_args(params)
+        domain_id = params["domain"]
+        return self.skill_book.list_skills(domain_id)
+
+
+@register_tool("read_skills")
+class ReadSkills(BaseTool):
+    description = (
+        "**CALL THIS to read full skill content** after discovering skills with get_domain_skills. "
+        "Returns detailed step-by-step guidance including menu locations, shortcuts, prerequisites, "
+        "and correct procedures that aren't obvious from screenshots. Read ALL potentially relevant skills before proceeding."
+    )
+
+    parameters = {
+        "type": "object",
+        "properties": {
+            "skill_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of skill IDs to read (e.g. ['chrome/bookmarks-manager', 'gimp/transparency']). "
+                               "Include ALL skills that might be relevant—better to read too many than miss one.",
+            }
+        },
+        "required": ["skill_ids"],
+    }
+
+    def __init__(self, cfg=None):
+        self.skill_book = cfg["skill_book"]
+        super().__init__(cfg)
+
+    def call(self, params: Union[str, dict], **kwargs) -> str:
+        params = self._verify_json_format_args(params)
+        skill_ids = params["skill_ids"]
+        skills_content = []
+        for skill_id in skill_ids:
+            skill = self.skill_book.get_skill(skill_id)
+            skills_content.append(skill.to_markdown())
+        return "\n\n---\n\n".join(skills_content)
+
+
+@register_tool("execute_python_code")
+class ExecutePythonCode(BaseTool):
+    description = (
+        "Executes a snippet of Python code in a secure sandboxed environment and returns the output or any errors encountered during execution. "
+        "The Python should be the raw complete code snippet ('python -c' is not required)."
+    )
+
+    parameters = {
+        "type": "object",
+        "properties": {
+            "code": {
+                "type": "string",
+                "description": "The Python code snippet to be executed.",
+            }
+        },
+        "required": ["code"],
+    }
+
+    def __init__(self, cfg=None):
+        self.http_server = cfg["http_server"]
+        super().__init__(cfg)
+
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1.0, min=1.0, max=8.0))
+    def call(self, params: Union[str, dict], **kwargs) -> str:
+        params = self._verify_json_format_args(params)
+        code = params["code"]
+
+        prefixes_to_strip = ["python -c", "python3 -c"]
+        for prefix in prefixes_to_strip:
+            if code.startswith(prefix):
+                code = code[len(prefix):].strip()
+
+        payload = json.dumps({"code": code})
+        try:
+            response = requests.post(
+                self.http_server + "/run_python",
+                headers={"Content-Type": "application/json"},
+                data=payload,
+                timeout=300,
+            )
+            if response.status_code == 200:
+                result = response.json()
+            else:
+                result = {"status": "error", "message": "Failed to execute command.", "output": None, "error": response.json().get("error")}
+        except Exception as e:
+            logger.error(f"Error executing python code: {traceback.format_exc()}")
+            raise e
+
+        if result.get("status") == "error":
+            logs = result.get("output") or result.get("error", "Unknown error")
+        else:
+            logs = result.get("message", "")
+
+        return json.dumps({"status": result.get("status"), "output": logs}, indent=2)
+
+
+@register_tool("execute_terminal_command")
+class ExecuteTerminalCommand(BaseTool):
+    description = "Executes a temporary non-stateful terminal command on the system and returns the command output or any errors encountered during execution."
+
+    parameters = {
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "description": "The terminal command to be executed.",
+            }
+        },
+        "required": ["command"],
+    }
+
+    def __init__(self, cfg=None):
+        self.http_server = cfg["http_server"]
+        super().__init__(cfg)
+
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1.0, min=1.0, max=8.0))
+    def call(self, params: Union[str, dict], **kwargs) -> str:
+        params = self._verify_json_format_args(params)
+        command = params["command"]
+        timeout = 300
+
+        payload = json.dumps({"script": command, "timeout": timeout})
+        try:
+            response = requests.post(
+                self.http_server + "/run_bash_script",
+                headers={"Content-Type": "application/json"},
+                data=payload,
+                timeout=timeout,
+            )
+            if response.status_code == 200:
+                result = response.json()
+                logger.info(f"Bash script executed successfully with return code: {result.get('returncode', -1)}")
+                return json.dumps(result, indent=2)
+            elif response.status_code == 400:
+                return json.dumps({
+                    "status": "error",
+                    "output": "",
+                    "error": f"Script execution failed with status code: {response.status_code}, error: {response.text}",
+                    "returncode": -1,
+                }, indent=2)
+            else:
+                logger.error(f"Failed to execute bash script. Status code: {response.status_code}, response: {response.text}")
+                raise Exception("Failed to execute bash script.")
+        except requests.exceptions.ReadTimeout:
+            logger.error("Bash script execution timed out")
+            return json.dumps({
+                "status": "error",
+                "output": "",
+                "error": f"Script execution timed out after {timeout} seconds",
+                "returncode": -1,
+            }, indent=2)
+        except Exception as e:
+            logger.error(f"Error executing bash script: {e}")
+            raise e

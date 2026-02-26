@@ -36,7 +36,7 @@ if __name__ == "__main__":
     DISABLE_RELOAD = os.getenv("DISABLE_RELOAD", "false").lower() == "true"
     PORT = int(os.getenv("PORT", "9876"))
     
-    # uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=not DISABLE_RELOAD)
+    uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=not DISABLE_RELOAD)
     
     # skill_book = SkillBook.load()
     # skill_pairs = skill_book.find_similar_skill_pairs(domain="chrome", threshold=0.0)
@@ -44,25 +44,25 @@ if __name__ == "__main__":
     
     # manager.save()
 
-    import base64
-    from agents.agent_factory import build_agent
+    # import base64
+    # from agents.agent_factory import build_agent
 
-    agent = build_agent("qwen3-vl-32b-thinking", vm_http_server="http://192.168.152.134:5000")
+    # agent = build_agent("qwen3-vl-32b-thinking", vm_http_server="http://192.168.152.134:5000")
 
-    img_filepath = r"D:\Projects\OSWorld-MA\results\pyautogui\screenshot\ui-tars-1.5-7b\libreoffice_calc\1d17d234-e39d-4ed7-b46f-4417922a4e7c\step_1_20251220@143713728414.png"
-    with open(img_filepath, "rb") as f:
-        img_bytes = f.read()
-        b64_screenshot = base64.b64encode(img_bytes).decode("utf-8")
+    # img_filepath = r"D:\Projects\OSWorld-MA\results\pyautogui\screenshot\ui-tars-1.5-7b\libreoffice_calc\1d17d234-e39d-4ed7-b46f-4417922a4e7c\step_1_20251220@143713728414.png"
+    # with open(img_filepath, "rb") as f:
+    #     img_bytes = f.read()
+    #     b64_screenshot = base64.b64encode(img_bytes).decode("utf-8")
     
-    with open(r"d:\Projects\OSWorld-MA\results\pyautogui\screenshot\ui-tars-1.5-7b\libreoffice_calc\1d17d234-e39d-4ed7-b46f-4417922a4e7c\step_2_20251220@143720591582.png", "rb") as f:
-        img_bytes = f.read()
-        b64_screenshot_2 = base64.b64encode(img_bytes).decode("utf-8")
+    # with open(r"d:\Projects\OSWorld-MA\results\pyautogui\screenshot\ui-tars-1.5-7b\libreoffice_calc\1d17d234-e39d-4ed7-b46f-4417922a4e7c\step_2_20251220@143720591582.png", "rb") as f:
+    #     img_bytes = f.read()
+    #     b64_screenshot_2 = base64.b64encode(img_bytes).decode("utf-8")
 
-    agent.predict(
-        screenshot=b64_screenshot, 
-        # task="Read the chrome domain you are given by the system",
-        task=" Write the 16th prime number into cell A (14*2). /think",
-    )
+    # agent.predict(
+    #     screenshot=b64_screenshot, 
+    #     # task="Read the chrome domain you are given by the system",
+    #     task=" Write the 16th prime number into cell A (14*2). /think",
+    # )
 
     # agent.predict(
     #     screenshot=b64_screenshot_2, 

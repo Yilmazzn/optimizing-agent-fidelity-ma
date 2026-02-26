@@ -12,12 +12,27 @@ def build_agent(agent_type: str, vm_http_server: str = None, max_images_in_histo
         return SkillAnthropicAgent(model="claude-haiku-4.5", http_server=vm_http_server)
     elif agent_type == "skill-claude-sonnet-4.5":
         return SkillAnthropicAgent(model="claude-sonnet-4.5", http_server=vm_http_server)
-    elif agent_type == "qwen3-vl-32b-thinking":
+    elif agent_type == "qwen3-vl":
         from agents.base_models.qwen_3_vl.qwen_vl_agent import QwenAgent
-        return QwenAgent()
+        return QwenAgent(
+            http_server=vm_http_server,
+            enable_python_tool=vm_http_server is not None,
+            enable_terminal_tool=vm_http_server is not None,
+        )
+    elif agent_type == "skill-qwen3-vl":
+        from agents.base_models.qwen_3_vl.qwen_vl_agent import SkillQwenAgent
+        return SkillQwenAgent(
+            http_server=vm_http_server,
+            enable_python_tool=vm_http_server is not None,
+            enable_terminal_tool=vm_http_server is not None,
+        )
     elif agent_type == "qwen3-vl-32b-thinking-v2":
         from agents.base_models.qwen_3_vl.qwen_vl_agent import QwenAgentV2
-        return QwenAgentV2()
+        return QwenAgentV2(
+            http_server=vm_http_server,
+            enable_python_tool=vm_http_server is not None,
+            enable_terminal_tool=vm_http_server is not None,
+        )
     elif agent_type == "custom-1":
         from agents.hybrid.agent import Custom1Agent
         return Custom1Agent()

@@ -6,8 +6,11 @@ import shutil
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential
 from agents.agent import Agent
-from agents.base_models.qwen_3_vl.prompts import QWEN_SYSTEM_PROMPT, QWEN_SYSTEM_PROMPT_V2
-from agents.base_models.qwen_3_vl.tools import ComputerUse
+from datetime import datetime
+import os
+
+from agents.base_models.qwen_3_vl.prompts import QWEN_SYSTEM_PROMPT, QWEN_SYSTEM_PROMPT_V2, QWEN_SKILLS_PROMPT
+from agents.base_models.qwen_3_vl.tools import ComputerUse, ExecutePythonCode, ExecuteTerminalCommand, GetDomainSkills, ReadSkills
 from agents.base_models.qwen_3_vl import utils as qwen_utils
 from domain.request import AgentPredictionResponse, TokenUsage
 
@@ -30,10 +33,15 @@ class ToolCallExtractionError(Exception):
 class QwenAgent(Agent):
 
     def __init__(
-        self, 
+        self,
+        http_server: str = None,
+        enable_python_tool: bool = False,
+        enable_terminal_tool: bool = False,
         **kwargs
     ) -> None:
         super().__init__(name="qwen3-vl", **kwargs)
+
+        self.http_server = http_server
 
         # qwen 3 vl trained on 1000x1000 coordinate system
         self.computer_use_tool = ComputerUse(
@@ -44,21 +52,40 @@ class QwenAgent(Agent):
         )
 
         self.image_size = (1000, 1000) # for rescaling coordinates (dont scale image before)
-    
-        self.inference_model = "qwen/qwen3-vl-235b-a22b-thinking" # TODO change this to thinking after tests
+
+        self.inference_model = "qwen/qwen3-vl-235b-a22b-thinking"
         self.system_prompt = QWEN_SYSTEM_PROMPT
-        
+
         self.client = openai.OpenAI(
             base_url=expect_env_var("OPENROUTER_BASE_URL"),
             api_key=expect_env_var("OPENROUTER_API_KEY")
         )
+
+        # tool registry: name -> tool instance
+        self.tool_registry = {
+            "computer_use": self.computer_use_tool,
+        }
+
+        if enable_python_tool or enable_terminal_tool:
+            if not self.http_server:
+                raise ValueError("http_server must be provided when coding tools are enabled.")
+
+        if enable_python_tool:
+            self.python_tool = ExecutePythonCode(cfg={"http_server": self.http_server})
+            self.tool_registry["execute_python_code"] = self.python_tool
+        if enable_terminal_tool:
+            self.terminal_tool = ExecuteTerminalCommand(cfg={"http_server": self.http_server})
+            self.tool_registry["execute_terminal_command"] = self.terminal_tool
+
+    def _get_tool_functions(self) -> list[dict]:
+        return [tool.function for tool in self.tool_registry.values()]
 
     def _get_system_message(self):
         system_message = NousFnCallPrompt().preprocess_fncall_messages(
             messages = [
                 Message(role="system", content=[ContentItem(text="QWEN_SYSTEM_PROMPT")]),
             ],
-            functions=[self.computer_use_tool.function]
+            functions=self._get_tool_functions()
         )
         system_message = system_message[0].model_dump()
         return system_message
@@ -66,7 +93,7 @@ class QwenAgent(Agent):
     @retry(
        reraise=True,
        stop=stop_after_attempt(4),
-       wait=wait_exponential(multiplier=1.0, min=1.0, max=8.0),
+       wait=wait_exponential(multiplier=4.0, min=1.0, max=60.0),
     )
     def _make_call(self, messages: list[dict]):
         result = self.client.chat.completions.create(
@@ -113,7 +140,7 @@ class QwenAgent(Agent):
                 continue
             del self.history[i]["screenshot"]
 
-    def end_task(self):
+    def end_task(self, task_id: str):
         pass
 
     def predict(self, screenshot: str, task: str) -> AgentPredictionResponse:
@@ -125,9 +152,9 @@ class QwenAgent(Agent):
         resized_height, resized_width = qwen_utils.smart_resize(
             width=1920,
             height=1080,
-            factor=32,      # Qwen VL 3 factor
-            min_pixels=1000*1000,
-            max_pixels=2000*1200,
+            factor=32,
+            min_pixels=3136,
+            max_pixels=12845056,
         )
 
         # system message
@@ -135,7 +162,7 @@ class QwenAgent(Agent):
             messages=[
                     Message(role="system", content=[ContentItem(text=self.system_prompt)]),
                 ],
-                functions=[self.computer_use_tool.function],
+                functions=self._get_tool_functions(),
                 lang=None,
             )
         system_message = system_message[0].model_dump()
@@ -159,17 +186,12 @@ class QwenAgent(Agent):
                 })
             if i == 0:
                 user_content.append({"type": "text", "text": f"/think {task}"})
-            else: 
-                tool_result = self.history[i-1].get("tool_result", None)
-                user_content.append({
-                    "type": "text",
-                    "text": tool_result,
-                })
 
-            messages.append({
-                "role": "user",
-                "content": user_content,
-            })
+            if user_content:
+                messages.append({
+                    "role": "user",
+                    "content": user_content,
+                })
 
             agent_response = self.history[i].get("agent_response", None)
             if agent_response:
@@ -184,7 +206,7 @@ class QwenAgent(Agent):
         result = self._make_call(messages=messages)
         output_text = result.choices[0].message.content
         model_reasoning = result.choices[0].message.model_extra["reasoning"]
-        agent_response = f"Model Reasoning:\n{model_reasoning}\n\n---\n\n{output_text}"
+        agent_response = f"<think>\n{model_reasoning}\n</think>\n\n{output_text}"
         
         cached_tokens = 0
         if hasattr(result.usage, "prompt_tokens_details") and hasattr(result.usage.prompt_tokens_details, "cached_tokens"):
@@ -228,8 +250,16 @@ class QwenAgent(Agent):
         pyautogui_actions = []
         try:
             for action in actions:
-                pyautogui_action = self.computer_use_tool.call(action["arguments"])
-                pyautogui_actions.append(pyautogui_action)
+                tool_name = action["name"]
+                tool = self.tool_registry.get(tool_name)
+                if tool is None:
+                    raise ValueError(f"Unknown tool: {tool_name}")
+
+                result = tool.call(action["arguments"])
+
+                if tool_name == "computer_use":
+                    pyautogui_actions.append(result)
+
         except Exception as e:
             return AgentPredictionResponse(
                 pyautogui_actions="FAIL",
@@ -239,12 +269,7 @@ class QwenAgent(Agent):
             )
         pyautogui_actions = "\n\n".join(pyautogui_actions)
 
-        self.history[-1]["agent_response"] = output_text
-        
-        tool_results_str = []
-        for action in actions:
-            tool_results_str.append(f"<tool_result>\nCalled {action['name']} with arguments {action['arguments']}\n</tool_result>")
-        self.history[-1]["tool_result"] = "\n".join(tool_results_str)
+        self.history[-1]["agent_response"] = agent_response
 
 
         return AgentPredictionResponse(
@@ -258,3 +283,27 @@ class QwenAgentV2(QwenAgent):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.system_prompt = QWEN_SYSTEM_PROMPT_V2
+
+
+class SkillQwenAgent(QwenAgent):
+    """QwenAgent with skill book integration, mirroring SkillAnthropicAgent."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+
+        from agents.hybrid.skill_agent_2.skill_book import SkillBook
+        self.skill_book = SkillBook.load()
+
+        self.system_prompt = QWEN_SKILLS_PROMPT.format(
+            dt=datetime.today().strftime('%A, %B %d, %Y'),
+            sudo_pw=os.getenv("VM_SUDO_PASSWORD"),
+            domains_list=self.skill_book.list_domains(),
+        )
+
+        # Register skill tools
+        self.tool_registry["get_domain_skills"] = GetDomainSkills(
+            cfg={"skill_book": self.skill_book}
+        )
+        self.tool_registry["read_skills"] = ReadSkills(
+            cfg={"skill_book": self.skill_book}
+        )
