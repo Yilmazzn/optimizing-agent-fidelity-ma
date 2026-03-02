@@ -47,7 +47,7 @@ if __name__ == "__main__":
     # import base64
     # from agents.agent_factory import build_agent
 
-    # agent = build_agent("qwen3-vl-32b-thinking", vm_http_server="http://192.168.152.134:5000")
+    # agent = build_agent("skill-qwen3-vl", vm_http_server="http://192.168.152.134:5000")
 
     # img_filepath = r"D:\Projects\OSWorld-MA\results\pyautogui\screenshot\ui-tars-1.5-7b\libreoffice_calc\1d17d234-e39d-4ed7-b46f-4417922a4e7c\step_1_20251220@143713728414.png"
     # with open(img_filepath, "rb") as f:
@@ -60,8 +60,7 @@ if __name__ == "__main__":
 
     # agent.predict(
     #     screenshot=b64_screenshot, 
-    #     # task="Read the chrome domain you are given by the system",
-    #     task=" Write the 16th prime number into cell A (14*2). /think",
+    #     task="Read the chrome domain skills you are given by the system",
     # )
 
     # agent.predict(
